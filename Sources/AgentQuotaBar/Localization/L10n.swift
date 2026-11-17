@@ -134,17 +134,35 @@ enum L10n {
         }
     }
 
-    /// Reset moment as a clock time when it is within a day, otherwise as a short date with weekday.
-    static func resetClockText(until date: Date?, now: Date = Date()) -> String {
-        guard let date else { return string("popover.no_value") }
-        if date.timeIntervalSince(now) <= 0 {
-            return string("reset.pending")
-        }
+    /// The reset's local calendar day and clock time, or a status when the time is unavailable.
+    static func resetClock(until date: Date?, now: Date) -> (day: String?, time: String) {
+        guard let date else { return (nil, string("popover.no_value")) }
+        guard date > now else { return (nil, string("reset.pending")) }
+
+        let calendar = Calendar.current
         let formatter = DateFormatter()
-        formatter.locale = Locale.current
-        let withinDay = date.timeIntervalSince(now) < 24 * 3600
-        formatter.dateFormat = string(withinDay ? "reset.time_format" : "reset.date_format")
-        return formatter.string(from: date)
+        formatter.locale = Locale(identifier: Bundle.module.preferredLocalizations.first ?? "en")
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = string("reset.time_format")
+        let time = formatter.string(from: date)
+
+        if calendar.isDate(date, inSameDayAs: now) {
+            return (string("reset.today"), time)
+        }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now),
+           calendar.isDate(date, inSameDayAs: tomorrow) {
+            return (string("reset.tomorrow"), time)
+        }
+
+        let sameYear = calendar.isDate(date, equalTo: now, toGranularity: .year)
+        formatter.dateFormat = string(sameYear ? "reset.date_format" : "reset.date_format_with_year")
+        return (formatter.string(from: date), time)
+    }
+
+    static func resetClockText(until date: Date?, now: Date = Date()) -> String {
+        let reset = resetClock(until: date, now: now)
+        return reset.day.map { "\($0) \(reset.time)" } ?? reset.time
     }
 
     static func localizedWindowLabel(_ window: QuotaWindow) -> String {

@@ -4,6 +4,8 @@ import AgentQuotaCore
 
 @main
 struct AgentQuotaBarApp: App {
+    @AppStorage("AgentQuotaBar.PopoverChartLayout") private var chartLayout: PopoverChartLayout = .byProvider
+    @AppStorage("AgentQuotaBar.PopoverResetLayout") private var resetLayout: PopoverResetLayout = .providerColumns
     @State private var store: QuotaStore
     @State private var launchAtLogin: LaunchAtLoginManager
     /// Set only when launched with `--mock-data`.
@@ -19,21 +21,33 @@ struct AgentQuotaBarApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            UsagePopoverView(store: store, isMockMode: mockController != nil)
+            UsagePopoverView(
+                store: store,
+                chartLayout: chartLayout,
+                resetLayout: resetLayout,
+                isMockMode: mockController != nil
+            )
         } label: {
-            let rings = menuBarRings(now: Date())
+            let rings = menuBarRings()
             MenuBarIconView(rings: rings.rings, accessibilityText: rings.accessibilityText)
         }
         .menuBarExtraStyle(.window)
 
         Window(L10n.string("settings.title"), id: "settings") {
-            SettingsView(store: store, launchAtLogin: launchAtLogin)
+            SettingsView(
+                store: store,
+                launchAtLogin: launchAtLogin,
+                chartLayout: $chartLayout,
+                resetLayout: $resetLayout
+            )
+            .background(DesktopWindowPresence())
         }
         .windowResizability(.contentSize)
 
         Window(L10n.string("mock.title"), id: "mock-data") {
             if let mockController {
                 MockDataControlView(controller: mockController)
+                    .background(DesktopWindowPresence())
             }
         }
         .windowResizability(.contentSize)
@@ -55,11 +69,11 @@ struct AgentQuotaBarApp: App {
         return (store, MockDataController(source: source, store: store))
     }
 
-    /// Each ring shows the provider's most pressing window in the provider's fixed color.
-    private func menuBarRings(now: Date) -> (rings: [MenuBarRing], accessibilityText: String) {
+    /// Each ring shows the provider's short-window usage in the provider's fixed color.
+    private func menuBarRings() -> (rings: [MenuBarRing], accessibilityText: String) {
         var parts: [String] = []
         let rings = store.usageSummaries().map { summary in
-            let window = UsageSummaryMath.mostPressingWindow(in: summary, now: now)
+            let window = summary.short
             if let window {
                 parts.append("\(summary.provider.displayName) \(Int(window.usedPercent.rounded()))%")
             }

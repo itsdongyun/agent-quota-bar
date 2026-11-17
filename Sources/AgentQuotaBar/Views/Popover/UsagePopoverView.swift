@@ -2,23 +2,18 @@ import AppKit
 import SwiftUI
 import AgentQuotaCore
 
-/// Main popover: header with viewer toggle, provider filter chips, pace chart card, and usage table.
+/// Main popover with refresh and menu actions, pace charts, and per-provider reset information.
 struct UsagePopoverView: View {
     @Bindable var store: QuotaStore
+    let chartLayout: PopoverChartLayout
+    let resetLayout: PopoverResetLayout
     var isMockMode = false
     @Environment(\.openWindow) private var openWindow
-    @AppStorage("AgentQuotaBar.PopoverChartLayout") private var chartLayout: PopoverChartLayout = .byProvider
-    /// `nil` shows every enabled provider.
-    @State private var providerFilter: ProviderID?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let now = context.date
             let summaries = store.usageSummaries()
-            let activeFilter = providerFilter.flatMap { filter in
-                summaries.contains { $0.provider == filter } ? filter : nil
-            }
-            let shown = activeFilter.map { filter in summaries.filter { $0.provider == filter } } ?? summaries
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
                 headerBar
@@ -30,8 +25,6 @@ struct UsagePopoverView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, DesignTokens.Spacing.lg)
                 } else {
-                    filterChips(summaries.map(\.provider), active: activeFilter)
-
                     if store.settings.preferences(for: .codex).isEnabled,
                        let announcement = store.codexResetAnnouncement,
                        announcement.isActive(at: now)
@@ -39,15 +32,15 @@ struct UsagePopoverView: View {
                         codexResetBanner(announcement, now: now)
                     }
 
-                    UsageChartCardView(summaries: shown, layout: chartLayout, now: now)
+                    UsageChartCardView(summaries: summaries, layout: chartLayout, now: now)
 
-                    UsageTableView(
-                        summaries: shown,
+                    UsageResetView(
+                        summaries: summaries,
                         statuses: store.connectionStatuses,
                         loadingProviders: store.refreshingProviders,
+                        layout: resetLayout,
                         now: now
                     )
-                    .padding(.horizontal, DesignTokens.Spacing.xxs)
                 }
             }
             .padding(DesignTokens.Spacing.lg)
@@ -60,11 +53,7 @@ struct UsagePopoverView: View {
 
     private var headerBar: some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
-            Text(L10n.string("popover.title"))
-                .font(.system(size: DesignTokens.Typography.popoverTitleSize, weight: .bold))
-                .foregroundStyle(DesignTokens.Colors.textPrimary)
             Spacer()
-            layoutPicker
             Button {
                 Task { await store.refreshAll() }
             } label: {
@@ -83,13 +72,11 @@ struct UsagePopoverView: View {
                 Divider()
                 if isMockMode {
                     Button(L10n.string("mock.menu_item")) {
-                        openWindow(id: "mock-data")
-                        NSApp.activate()
+                        openDesktopWindow(id: "mock-data")
                     }
                 }
                 Button(L10n.string("action.settings")) {
-                    openWindow(id: "settings")
-                    NSApp.activate()
+                    openDesktopWindow(id: "settings")
                 }
                 Button(L10n.string("action.quit")) {
                     NSApp.terminate(nil)
@@ -106,66 +93,10 @@ struct UsagePopoverView: View {
         }
     }
 
-    private var layoutPicker: some View {
-        HStack(spacing: DesignTokens.Spacing.xxxs) {
-            ForEach(PopoverChartLayout.allCases) { option in
-                let isSelected = option == chartLayout
-                Button {
-                    chartLayout = option
-                } label: {
-                    Image(systemName: option.symbolName)
-                        .font(.system(size: DesignTokens.Layout.iconSmallSize, weight: .semibold))
-                        .foregroundStyle(isSelected ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
-                        .frame(width: DesignTokens.Layout.segmentButtonWidth, height: DesignTokens.Layout.segmentButtonHeight)
-                        .background(isSelected ? DesignTokens.Colors.controlSelectedBackground : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(option.title)
-                .accessibilityLabel(option.title)
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
-            }
-        }
-        .padding(DesignTokens.Spacing.xxxs)
-        .background(DesignTokens.Colors.controlBackground)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md))
-    }
-
-    // MARK: - Filter chips
-
-    private func filterChips(_ providers: [ProviderID], active: ProviderID?) -> some View {
-        HStack(spacing: DesignTokens.Spacing.xs) {
-            chip(title: L10n.string("popover.filter_all"), provider: nil, isSelected: active == nil)
-            ForEach(providers) { provider in
-                chip(title: provider.displayName, provider: provider, isSelected: active == provider)
-            }
-        }
-    }
-
-    private func chip(title: String, provider: ProviderID?, isSelected: Bool) -> some View {
-        Button {
-            providerFilter = provider
-        } label: {
-            HStack(spacing: DesignTokens.Spacing.xs) {
-                if let provider {
-                    Circle()
-                        .fill(DesignTokens.Colors.provider(provider))
-                        .frame(width: DesignTokens.Layout.providerDotSize, height: DesignTokens.Layout.providerDotSize)
-                }
-                Text(title)
-                    .font(.system(size: DesignTokens.Typography.chipSize, weight: isSelected ? .bold : .medium))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(isSelected ? DesignTokens.Colors.textPrimary : DesignTokens.Colors.textSecondary)
-            .padding(.horizontal, DesignTokens.Layout.chipHorizontalPadding)
-            .padding(.vertical, DesignTokens.Layout.chipVerticalPadding)
-            .background(isSelected ? DesignTokens.Colors.controlSelectedBackground : DesignTokens.Colors.controlBackground)
-            .clipShape(Capsule())
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    private func openDesktopWindow(id: String) {
+        DesktopWindowPresence.prepareToOpen()
+        openWindow(id: id)
+        NSApp.activate()
     }
 
     private var updatedLabel: String {

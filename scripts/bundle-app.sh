@@ -7,12 +7,17 @@ BUNDLE_DIR="$ROOT_DIR/dist/${APP_NAME}.app"
 CONTENTS_DIR="$BUNDLE_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+MACOS_SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 
 cd "$ROOT_DIR"
-swift build -c release
+# Clang uses -isysroot to record the SDK version macOS uses for system UI compatibility.
+swift build -c release \
+  -Xswiftc -Xclang-linker -Xswiftc -isysroot \
+  -Xswiftc -Xclang-linker -Xswiftc "$MACOS_SDK_PATH"
 
-BIN_PATH="$(swift build -c release --show-bin-path)/${APP_NAME}"
-RESOURCE_BUNDLE="$(swift build -c release --show-bin-path)/agent-quota-bar_${APP_NAME}.bundle"
+BUILD_DIR="$(swift build -c release --show-bin-path)"
+BIN_PATH="$BUILD_DIR/${APP_NAME}"
+RESOURCE_BUNDLE="$BUILD_DIR/agent-quota-bar_${APP_NAME}.bundle"
 
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"

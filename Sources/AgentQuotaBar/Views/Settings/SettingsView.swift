@@ -1,10 +1,12 @@
 import SwiftUI
 import AgentQuotaCore
 
-/// Settings window for CLI integration status, per-provider limit filtering, refresh cadence, and launch at login.
+/// Settings for the popover, provider limits, refresh cadence, and launch at login.
 struct SettingsView: View {
     @Bindable var store: QuotaStore
     @Bindable var launchAtLogin: LaunchAtLoginManager
+    @Binding var chartLayout: PopoverChartLayout
+    @Binding var resetLayout: PopoverResetLayout
 
     var body: some View {
         ScrollView {
@@ -29,6 +31,36 @@ struct SettingsView: View {
                 .foregroundStyle(DesignTokens.Colors.textSecondary)
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.sm) {
+                HStack {
+                    Label(L10n.string("settings.chart_layout"), systemImage: "chart.xyaxis.line")
+                        .font(.system(size: DesignTokens.Typography.bodySize))
+                    Spacer()
+                    Picker(L10n.string("settings.chart_layout"), selection: $chartLayout) {
+                        ForEach(PopoverChartLayout.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+
+                Divider()
+
+                HStack {
+                    Label(L10n.string("settings.reset_layout"), systemImage: "rectangle.3.group")
+                        .font(.system(size: DesignTokens.Typography.bodySize))
+                    Spacer()
+                    Picker(L10n.string("settings.reset_layout"), selection: $resetLayout) {
+                        ForEach(PopoverResetLayout.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+
+                Divider()
+
                 HStack {
                     Label(L10n.string("settings.refresh_interval"), systemImage: "clock")
                         .font(.system(size: DesignTokens.Typography.bodySize))

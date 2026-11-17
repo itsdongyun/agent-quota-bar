@@ -30,6 +30,7 @@ let package = Package(
             resources: [
                 .process("Resources/en.lproj"),
                 .process("Resources/ko.lproj"),
+                .process("Resources/ProviderIcons"),
             ]
         ),
         .testTarget(

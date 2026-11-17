@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// A marker on a pace plot. `x` is the elapsed fraction of the window, `y` the used fraction (both `0...1`).
@@ -14,12 +15,11 @@ struct PacePlotMarker: Identifiable {
     let y: Double
     let color: Color
     let style: Style
-    let label: String?
+    let label: String
     let help: String
 }
 
-/// Square pace plot: over-pace (upper-left) and under-pace (lower-right) zones, a grid,
-/// the dashed even-pace diagonal, and usage markers with optional percent labels.
+/// Pace plot with a rectangular grid, a dotted even-pace diagonal, and usage markers.
 struct PacePlotView: View {
     let markers: [PacePlotMarker]
 
@@ -28,8 +28,7 @@ struct PacePlotView: View {
             let size = proxy.size
             let labelCenters = placeLabels(in: size)
             ZStack(alignment: .topLeading) {
-                background
-                    .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.sm))
+                grid
 
                 ForEach(orderedMarkers) { marker in
                     markerView(marker)
@@ -38,12 +37,10 @@ struct PacePlotView: View {
                 }
 
                 ForEach(markers) { marker in
-                    if let label = marker.label, let center = labelCenters[marker.id] {
-                        Text(label)
-                            .font(.system(size: DesignTokens.Typography.chartLabelSize, weight: .bold))
-                            .monospacedDigit()
+                    if let center = labelCenters[marker.id] {
+                        Text(marker.label)
+                            .font(Font(DesignTokens.Typography.chartLabel))
                             .foregroundStyle(DesignTokens.Colors.textPrimary)
-                            .shadow(color: DesignTokens.Colors.chartLabelShadow, radius: DesignTokens.Shadow.chartLabelRadius)
                             .fixedSize()
                             .position(center)
                             .allowsHitTesting(false)
@@ -51,6 +48,7 @@ struct PacePlotView: View {
                 }
             }
         }
+        .aspectRatio(DesignTokens.Layout.chartAspectRatio, contentMode: .fit)
     }
 
     /// Rings first so a weekly marker on the same spot stays on top.
@@ -58,27 +56,13 @@ struct PacePlotView: View {
         markers.filter { $0.style == .ring } + markers.filter { $0.style == .filled }
     }
 
-    private var background: some View {
+    private var grid: some View {
         Canvas { context, size in
-            let rect = CGRect(origin: .zero, size: size)
-
-            var underPace = Path()
-            underPace.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-            underPace.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            underPace.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-            underPace.closeSubpath()
-            context.fill(underPace, with: .color(DesignTokens.Colors.chartUnderPaceZone))
-
-            var overPace = Path()
-            overPace.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-            overPace.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
-            overPace.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-            overPace.closeSubpath()
-            context.fill(overPace, with: .color(DesignTokens.Colors.chartOverPaceZone))
-
+            let lineInset = DesignTokens.Stroke.hairline / 2
+            let rect = CGRect(origin: .zero, size: size).insetBy(dx: lineInset, dy: lineInset)
             let divisions = DesignTokens.Layout.chartGridDivisions
-            var grid = Path()
-            for step in 0...divisions {
+            var grid = Path(rect)
+            for step in 1..<divisions {
                 let fraction = CGFloat(step) / CGFloat(divisions)
                 let x = rect.minX + rect.width * fraction
                 let y = rect.minY + rect.height * fraction
@@ -95,32 +79,21 @@ struct PacePlotView: View {
             context.stroke(
                 diagonal,
                 with: .color(DesignTokens.Colors.chartPaceLine),
-                style: StrokeStyle(
-                    lineWidth: DesignTokens.Stroke.paceLineWidth,
-                    dash: [DesignTokens.Stroke.paceDashLength, DesignTokens.Stroke.paceDashGap]
-                )
+                style: DesignTokens.Stroke.chartPaceLine
             )
         }
     }
 
-    @ViewBuilder
     private func markerView(_ marker: PacePlotMarker) -> some View {
-        switch marker.style {
-        case .filled:
-            Circle()
-                .fill(marker.color)
-                .overlay(
-                    Circle().stroke(DesignTokens.Colors.chartMarkerOutline, lineWidth: DesignTokens.Stroke.chartMarkerOutlineWidth)
-                )
-                .frame(width: DesignTokens.Layout.chartFilledMarkerSize, height: DesignTokens.Layout.chartFilledMarkerSize)
-        case .ring:
-            Circle()
-                .fill(DesignTokens.Colors.chartMarkerOutline)
-                .overlay(
-                    Circle().strokeBorder(marker.color, lineWidth: DesignTokens.Stroke.chartRingWidth)
-                )
-                .frame(width: DesignTokens.Layout.chartRingMarkerSize, height: DesignTokens.Layout.chartRingMarkerSize)
+        Group {
+            switch marker.style {
+            case .filled:
+                Circle().fill(marker.color)
+            case .ring:
+                Circle().strokeBorder(marker.color, lineWidth: DesignTokens.Stroke.chartRingWidth)
+            }
         }
+        .frame(width: DesignTokens.Layout.chartMarkerSize, height: DesignTokens.Layout.chartMarkerSize)
     }
 
     private func position(of marker: PacePlotMarker, in size: CGSize) -> CGPoint {
@@ -140,10 +113,9 @@ struct PacePlotView: View {
         var result: [String: CGPoint] = [:]
 
         for marker in markers {
-            guard let label = marker.label else { continue }
             let anchor = position(of: marker, in: size)
-            let width = CGFloat(label.count) * DesignTokens.Layout.chartLabelApproxCharWidth
-            let offset = DesignTokens.Layout.chartFilledMarkerSize / 2 + DesignTokens.Layout.chartLabelGap + width / 2
+            let width = marker.label.size(withAttributes: [.font: DesignTokens.Typography.chartLabel]).width
+            let offset = DesignTokens.Layout.chartMarkerSize / 2 + DesignTokens.Layout.chartLabelGap + width / 2
             let rightX = anchor.x + offset
             let centerX = rightX + width / 2 <= size.width ? rightX : anchor.x - offset
 
