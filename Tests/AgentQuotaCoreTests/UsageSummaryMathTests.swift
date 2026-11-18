@@ -65,16 +65,4 @@ final class UsageSummaryMathTests: XCTestCase {
         XCTAssertEqual(UsageSummaryMath.paceLevel(for: nearlyFull, now: now), .critical)
     }
 
-    func testMostPressingWindowPrefersWorseLevel() {
-        let short = window("5h", category: .fiveHour, cadence: .fiveHour, used: 40, remaining: 4 * 3600)
-        let weekly = window("7d", category: .sevenDay, cadence: .sevenDay, used: 50, remaining: 6 * day)
-        let summary = ProviderUsageSummary(provider: .claude, short: short, weekly: weekly)
-        // Both critical (5h projects 200%, weekly 350%), so the higher usage wins.
-        XCTAssertEqual(UsageSummaryMath.mostPressingWindow(in: summary, now: now)?.id, "7d")
-
-        let calmWeekly = window("7d-calm", category: .sevenDay, cadence: .sevenDay, used: 50, remaining: 3 * day)
-        // Weekly now projects 87.5% (warning), so the critical 5h window wins.
-        let calmSummary = ProviderUsageSummary(provider: .claude, short: short, weekly: calmWeekly)
-        XCTAssertEqual(UsageSummaryMath.mostPressingWindow(in: calmSummary, now: now)?.id, "5h")
-    }
 }

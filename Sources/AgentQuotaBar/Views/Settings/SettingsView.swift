@@ -25,6 +25,8 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @Bindable var store: QuotaStore
     @Bindable var launchAtLogin: LaunchAtLoginManager
+    var claudeLogin: ClaudeLoginCoordinator
+    @Binding var menuBarStyle: MenuBarStyle
     @Binding var chartLayout: PopoverChartLayout
     @Binding var resetLayout: PopoverResetLayout
 
@@ -39,8 +41,13 @@ struct SettingsView: View {
         }
         .frame(width: DesignTokens.Layout.settingsWidth)
         .frame(minHeight: DesignTokens.Layout.settingsMinHeight)
+        // The provider deletes a dead login on its own; follow it so the sign-in button comes back.
+        .onChange(of: store.connectionStatuses[.claude]) {
+            claudeLogin.reloadAccount()
+        }
         .task {
             launchAtLogin.refresh()
+            claudeLogin.reloadAccount()
             await store.refreshConnectionStatuses()
         }
     }
@@ -102,16 +109,6 @@ struct SettingsView: View {
     private var generalTab: some View {
         Form {
             Section {
-                Picker(selection: $store.settings.refreshInterval) {
-                    ForEach(RefreshIntervalOption.allCases) { option in
-                        Text(L10n.format("settings.interval_minutes", option.minutes))
-                            .tag(option)
-                    }
-                } label: {
-                    Label(L10n.string("settings.refresh_interval"), systemImage: "clock")
-                }
-                .pickerStyle(.menu)
-
                 Toggle(isOn: Binding(
                     get: { launchAtLogin.isEnabled },
                     set: { launchAtLogin.setEnabled($0) }
@@ -128,6 +125,23 @@ struct SettingsView: View {
                         .font(.system(size: DesignTokens.Typography.microSize))
                         .foregroundStyle(DesignTokens.Colors.textSecondary)
                 }
+            }
+
+            Section {
+                Picker(selection: $menuBarStyle) {
+                    ForEach(MenuBarStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                } label: {
+                    Label(L10n.string("settings.menu_bar_style"), systemImage: "menubar.rectangle")
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text(L10n.string("settings.section.menu_bar"))
+            } footer: {
+                Text(menuBarStyle.hint)
+                    .font(.system(size: DesignTokens.Typography.microSize))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
         }
         .formStyle(.grouped)
@@ -212,6 +226,7 @@ struct SettingsView: View {
                     .foregroundStyle(DesignTokens.Colors.textSecondary)
                 Spacer()
                 Button {
+                    claudeLogin.reloadAccount()
                     Task { await store.refreshConnectionStatuses(forceVerify: true) }
                 } label: {
                     Label(L10n.string("action.recheck"), systemImage: "arrow.triangle.2.circlepath")
@@ -293,12 +308,16 @@ struct SettingsView: View {
 
                 LabeledContent(L10n.string("settings.provider.status")) {
                     if prefs.isEnabled {
-                        connectionBadge(status)
+                        connectionBadge(status, provider: provider)
                     } else {
                         Text(L10n.string("settings.provider.disabled"))
                             .font(.system(size: DesignTokens.Typography.captionSize))
                             .foregroundStyle(DesignTokens.Colors.textSecondary)
                     }
+                }
+
+                if provider == .claude {
+                    claudeAccountRows
                 }
             } header: {
                 Text(L10n.string("settings.section.provider_connection"))
@@ -391,7 +410,7 @@ struct SettingsView: View {
             : DesignTokens.Colors.statusWarning
     }
 
-    private func connectionBadge(_ status: ProviderConnectionStatus) -> some View {
+    private func connectionBadge(_ status: ProviderConnectionStatus, provider: ProviderID) -> some View {
         let color: Color = status.isHealthy
             ? DesignTokens.Colors.statusHealthy
             : DesignTokens.Colors.statusWarning
@@ -399,10 +418,73 @@ struct SettingsView: View {
         return HStack(spacing: DesignTokens.Spacing.xxs) {
             Image(systemName: icon)
                 .font(.system(size: DesignTokens.Typography.captionSize))
-            Text(L10n.statusText(status))
+            Text(L10n.statusText(status, provider: provider))
                 .font(.system(size: DesignTokens.Typography.captionSize, weight: .medium))
         }
         .foregroundStyle(color)
+    }
+
+    // MARK: - Claude Account
+
+    @ViewBuilder
+    private var claudeAccountRows: some View {
+        if claudeLogin.isSignedIn {
+            LabeledContent(L10n.string("settings.claude.account")) {
+                Text(claudeLogin.accountEmail ?? L10n.string("popover.no_value"))
+                    .font(.system(size: DesignTokens.Typography.captionSize))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            HStack {
+                Spacer()
+                Button(L10n.string("settings.claude.sign_out"), role: .destructive) {
+                    claudeLogin.signOut()
+                }
+            }
+        } else if claudeLogin.isInProgress {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                ProgressView().controlSize(.small)
+                Text(L10n.string(claudeLogin.phase == .exchanging ? "settings.claude.exchanging" : "settings.claude.waiting"))
+                    .font(.system(size: DesignTokens.Typography.captionSize))
+                    .foregroundStyle(DesignTokens.Colors.textSecondary)
+                Spacer()
+                if claudeLogin.phase == .waitingForBrowser {
+                    Button(L10n.string("settings.claude.reopen_browser")) {
+                        claudeLogin.reopenBrowser()
+                    }
+                }
+                Button(L10n.string("action.cancel")) {
+                    claudeLogin.cancel()
+                }
+            }
+        } else {
+            HStack(spacing: DesignTokens.Spacing.sm) {
+                if case let .failed(failure) = claudeLogin.phase {
+                    Text(claudeFailureText(failure))
+                        .font(.system(size: DesignTokens.Typography.captionSize))
+                        .foregroundStyle(DesignTokens.Colors.statusWarning)
+                }
+                Spacer()
+                Button {
+                    claudeLogin.signIn()
+                } label: {
+                    Label(L10n.string("settings.claude.sign_in"), systemImage: "person.crop.circle.badge.checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func claudeFailureText(_ failure: ClaudeLoginCoordinator.Failure) -> String {
+        switch failure {
+        case .portUnavailable:
+            let ports = ClaudeOAuthClient.Config.callbackPorts.map(String.init).joined(separator: "/")
+            return L10n.format("settings.claude.error.port", ports)
+        case .timedOut: return L10n.string("settings.claude.error.timeout")
+        case .denied: return L10n.string("settings.claude.error.denied")
+        case .failed: return L10n.string("settings.claude.error.failed")
+        }
     }
 
     private func cliHintText(for provider: ProviderID) -> Text {

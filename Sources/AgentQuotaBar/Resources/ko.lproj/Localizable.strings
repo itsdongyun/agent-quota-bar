@@ -2,7 +2,8 @@
 "action.refresh" = "새로고침";
 "action.settings" = "설정";
 "action.quit" = "종료";
-"action.recheck" = "CLI 다시 확인";
+"action.recheck" = "연동 다시 확인";
+"action.cancel" = "취소";
 "action.open_link" = "자세히";
 
 "popover.updated_at" = "업데이트: %@";
@@ -34,6 +35,8 @@
 "popover.recent_reset_badge" = "리셋 공지";
 "popover.recent_reset_at" = "%@ 리셋 공지 · %@";
 "popover.recent_reset_fallback" = "%@ 최근 리셋 공지";
+"popover.detected_reset_badge" = "리셋 감지";
+"popover.detected_reset_at" = "%1$@ %2$@ 조기 리셋 · %3$@ 감지";
 
 "window.five_hour" = "5시간 한도";
 "window.seven_day" = "7일 한도";
@@ -58,6 +61,8 @@
 "status.not_installed" = "CLI 미설치";
 "status.login_required" = "CLI 로그인 필요";
 "status.session_expired" = "세션 만료: CLI를 한 번 실행하면 갱신됩니다";
+"status.login_required.claude" = "로그인 필요: 설정에서 로그인해 주세요";
+"status.session_expired.claude" = "로그인 만료: 다시 로그인해 주세요";
 "status.keychain_denied" = "키체인 접근 허용 필요";
 "status.rate_limited" = "요청 제한(429)";
 "status.rate_limited_until" = "요청 제한 (%@)";
@@ -87,10 +92,16 @@
 "settings.reset_layout.periodLists" = "기간별 목록";
 "settings.reset_layout.providerColumns.hint" = "각 프로바이더 카드 아래에 5시간·주간 리셋 시간을 묶어 표시합니다.";
 "settings.reset_layout.periodLists.hint" = "5시간과 주간 열을 기준으로 프로바이더별 리셋 시간을 정렬합니다.";
-"settings.refresh_interval" = "갱신 주기";
-"settings.interval_minutes" = "%d분마다";
 "settings.launch_at_login" = "로그인 시 자동 실행";
 "settings.launch_at_login_hint" = ".app 번들로 실행할 때 활성화됩니다.";
+"settings.section.menu_bar" = "메뉴 막대";
+"settings.menu_bar_style" = "표시 방식";
+"settings.menu_bar_style.icon" = "아이콘";
+"settings.menu_bar_style.rings" = "링";
+"settings.menu_bar_style.ringsWithPercent" = "링 + 숫자";
+"settings.menu_bar_style.icon.hint" = "앱 아이콘 하나만 표시합니다.";
+"settings.menu_bar_style.rings.hint" = "프로바이더마다 5시간 사용량 링을 표시합니다.";
+"settings.menu_bar_style.ringsWithPercent.hint" = "프로바이더마다 5시간 사용량 링과 그 안에 퍼센트를 표시합니다.";
 "settings.section.providers" = "프로바이더 및 추적 한도";
 "settings.section.provider_connection" = "연동 및 상태";
 "settings.section.provider_limits" = "추적 한도";
@@ -101,6 +112,18 @@
 "settings.limit.seven_day" = "7일 한도";
 "settings.limit.model_specific" = "모델별 한도";
 "settings.limit.models_discovered" = "세부 모델 선택";
-"settings.cli_hint.claude" = "Claude Code `statusLine` 캐시와 로컬 자격 증명을 사용합니다.";
+"settings.cli_hint.claude" = "브라우저에서 Claude 계정으로 로그인해 사용량을 직접 조회합니다. Claude Code CLI 로그인에는 영향을 주지 않습니다.";
+"settings.claude.account" = "계정";
+"settings.claude.sign_in" = "Claude 로그인";
+"settings.claude.sign_out" = "로그아웃";
+"settings.claude.waiting" = "브라우저에서 승인을 기다리는 중…";
+"settings.claude.exchanging" = "로그인 마무리 중…";
+"settings.claude.reopen_browser" = "브라우저 다시 열기";
+"settings.claude.error.port" = "로그인용 로컬 포트(%@)를 열 수 없습니다.";
+"settings.claude.error.timeout" = "로그인 시간이 초과되었습니다. 다시 시도해 주세요.";
+"settings.claude.error.denied" = "로그인이 취소되었거나 거부되었습니다.";
+"settings.claude.error.failed" = "로그인에 실패했습니다. 다시 시도해 주세요.";
+"oauth.callback.success" = "Agent Quota Bar에 로그인되었습니다. 이 탭을 닫아도 됩니다.";
+"oauth.callback.failure" = "로그인하지 못했습니다. Agent Quota Bar로 돌아가 다시 시도해 주세요.";
 "settings.cli_hint.codex" = "로컬 `~/.codex/auth.json`을 사용합니다.";
 "settings.cli_hint.antigravity" = "로컬 `agy -p \"/usage\"`로 조회합니다 (토큰 0 소모).";

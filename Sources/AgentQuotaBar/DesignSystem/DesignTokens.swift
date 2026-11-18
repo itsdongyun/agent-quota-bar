@@ -81,6 +81,9 @@ enum DesignTokens {
         static let captionSize: CGFloat = 11
         static let microSize: CGFloat = 10
         @MainActor static let chartLabel = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold)
+        static let menuBarRingLabelSize: CGFloat = 7.5
+        /// Lets "100" shrink to fit inside a menu bar ring.
+        static let menuBarRingLabelMinScale: CGFloat = 0.7
     }
 
     enum Radius {
@@ -109,7 +112,6 @@ enum DesignTokens {
         static let chartGridDivisions: Int = 4
         static let chartLabelHeight: CGFloat = 12
         static let chartLabelGap: CGFloat = 3
-        static let chartLabelCollisionGap: CGFloat = 14
         static let chartMarkerSize: CGFloat = 8
         static let legendMarkerSize: CGFloat = 8
 
@@ -118,6 +120,8 @@ enum DesignTokens {
         static let resetListTimeWidth: CGFloat = 60
 
         static let menuBarRingSize: CGFloat = 13
+        /// Larger ring used when the percentage is drawn inside it.
+        static let menuBarLabeledRingSize: CGFloat = 18
         static let menuBarRingSpacing: CGFloat = 4
 
         static let providerDotSize: CGFloat = 8
@@ -131,7 +135,8 @@ enum DesignTokens {
         static let chartRingWidth: CGFloat = 1.5
         static let legendRingWidth: CGFloat = 1.5
         static let resetCardAccentWidth: CGFloat = 2
-        static let menuBarRingWidth: CGFloat = 2.5
+        static let menuBarRingWidth: CGFloat = 3
+        static let menuBarLabeledRingWidth: CGFloat = 3
     }
 
     enum Opacity {

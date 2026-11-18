@@ -141,7 +141,7 @@ struct UsageResetView: View {
                     Image(systemName: "exclamationmark.circle")
                         .font(.system(size: DesignTokens.Layout.iconSmallSize))
                         .foregroundStyle(DesignTokens.Colors.statusWarning)
-                        .help(L10n.statusText(status, now: now))
+                        .help(L10n.statusText(status, provider: provider, now: now))
                 }
             }
         }
@@ -153,11 +153,11 @@ struct UsageResetView: View {
         if loadingProviders.contains(provider) {
             ProgressView().controlSize(.small)
         } else if !status.isHealthy {
-            Text(L10n.statusText(status, now: now))
+            Text(L10n.statusText(status, provider: provider, now: now))
                 .font(.system(size: DesignTokens.Typography.captionSize))
                 .foregroundStyle(DesignTokens.Colors.statusWarning)
                 .lineLimit(2)
-                .help(L10n.statusText(status, now: now))
+                .help(L10n.statusText(status, provider: provider, now: now))
         } else {
             Text(L10n.string("popover.no_visible_limits_short"))
                 .font(.system(size: DesignTokens.Typography.captionSize))

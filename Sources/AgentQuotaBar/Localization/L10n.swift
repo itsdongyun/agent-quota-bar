@@ -24,7 +24,8 @@ enum L10n {
         return Text(raw)
     }
 
-    static func statusText(_ status: ProviderConnectionStatus, now: Date = Date()) -> String {
+    /// Claude signs in inside the app rather than through a CLI, so its login states read differently.
+    static func statusText(_ status: ProviderConnectionStatus, provider: ProviderID? = nil, now: Date = Date()) -> String {
         switch status {
         case .unknown:
             return string("status.unknown")
@@ -33,9 +34,9 @@ enum L10n {
         case .notInstalled:
             return string("status.not_installed")
         case .loginRequired:
-            return string("status.login_required")
+            return string(provider == .claude ? "status.login_required.claude" : "status.login_required")
         case .sessionExpired:
-            return string("status.session_expired")
+            return string(provider == .claude ? "status.session_expired.claude" : "status.session_expired")
         case .keychainDenied:
             return string("status.keychain_denied")
         case let .rateLimited(retryAfter):

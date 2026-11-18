@@ -39,6 +39,7 @@ struct UsagePopoverView: View {
             .frame(width: DesignTokens.Layout.popoverWidth)
             .fixedSize(horizontal: false, vertical: true)
         }
+        .onAppear { store.popoverDidOpen() }
     }
 
     // MARK: - Header
@@ -48,7 +49,7 @@ struct UsagePopoverView: View {
             resetAnnouncementBadges(now: now)
             Spacer()
             Button {
-                Task { await store.refreshAll() }
+                Task { await store.userRefresh() }
             } label: {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: DesignTokens.Layout.iconMediumSize, weight: .semibold))
@@ -103,11 +104,13 @@ struct UsagePopoverView: View {
     private func resetAnnouncementBadges(now: Date) -> some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
             ForEach(ProviderID.allCases) { provider in
-                if store.settings.preferences(for: provider).isEnabled,
-                   let announcement = store.resetAnnouncements[provider],
-                   announcement.isActive(at: now)
-                {
-                    resetAnnouncementBadge(announcement, now: now)
+                if store.settings.preferences(for: provider).isEnabled {
+                    // A reset seen in our own usage data is the same event a tracker reports later, and more certain.
+                    if let detected = store.detectedResets[provider], detected.isActive(at: now) {
+                        detectedResetBadge(detected)
+                    } else if let announcement = store.resetAnnouncements[provider], announcement.isActive(at: now) {
+                        resetAnnouncementBadge(announcement, now: now)
+                    }
                 }
             }
         }
@@ -128,6 +131,13 @@ struct UsagePopoverView: View {
             resetBadge(for: announcement.provider, title: title)
                 .help(helpText)
         }
+    }
+
+    private func detectedResetBadge(_ detected: DetectedReset) -> some View {
+        let windows = detected.windows.map { L10n.localizedWindowLabel($0) }.joined(separator: ", ")
+        let time = detected.detectedAt.formatted(date: .omitted, time: .shortened)
+        return resetBadge(for: detected.provider, title: L10n.string("popover.detected_reset_badge"))
+            .help(L10n.format("popover.detected_reset_at", detected.provider.displayName, windows, time))
     }
 
     private func badgeTitle(for kind: ResetAnnouncement.Kind) -> String {

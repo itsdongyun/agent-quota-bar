@@ -61,14 +61,14 @@ struct UsageChartCardView: View {
     private var legend: some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
             Circle()
-                .fill(DesignTokens.Colors.legendMarker)
-                .frame(width: DesignTokens.Layout.legendMarkerSize, height: DesignTokens.Layout.legendMarkerSize)
-            Text(L10n.slotTitle(.weekly))
-            Circle()
                 .strokeBorder(DesignTokens.Colors.legendMarker, lineWidth: DesignTokens.Stroke.legendRingWidth)
                 .frame(width: DesignTokens.Layout.legendMarkerSize, height: DesignTokens.Layout.legendMarkerSize)
-                .padding(.leading, DesignTokens.Spacing.xs)
             Text(L10n.slotTitle(.short))
+            Circle()
+                .fill(DesignTokens.Colors.legendMarker)
+                .frame(width: DesignTokens.Layout.legendMarkerSize, height: DesignTokens.Layout.legendMarkerSize)
+                .padding(.leading, DesignTokens.Spacing.xs)
+            Text(L10n.slotTitle(.weekly))
         }
         .font(.system(size: DesignTokens.Typography.captionSize, weight: .medium))
         .foregroundStyle(DesignTokens.Colors.textSecondary)

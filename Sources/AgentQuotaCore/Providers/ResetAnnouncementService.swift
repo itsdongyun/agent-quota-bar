@@ -12,24 +12,51 @@ public actor ResetAnnouncementService {
         let announcement: ResetAnnouncement?
     }
 
+    /// Reset notices are announced hours ahead and are not usage data, so they are fetched far less often than
+    /// usage. Calls in between, which come with every usage refresh, are answered from the cache.
+    public static let defaultMinimumFetchInterval: TimeInterval = 30 * 60
+
     private let transport: HTTPTransport
-    private let minimumFetchInterval: TimeInterval
+    public nonisolated let minimumFetchInterval: TimeInterval
     private var cache: [ProviderID: CacheEntry] = [:]
     private var inFlightTasks: [ProviderID: Task<ResetAnnouncement?, Never>] = [:]
 
     public init(
         transport: HTTPTransport = EphemeralHTTPTransport(timeout: 10),
-        minimumFetchInterval: TimeInterval = 300
+        minimumFetchInterval: TimeInterval = ResetAnnouncementService.defaultMinimumFetchInterval
     ) {
         self.transport = transport
         self.minimumFetchInterval = minimumFetchInterval
     }
 
+    /// Fetches the given providers' announcements together, in parallel (each provider has its own tracker).
+    /// Providers fetched within `minimumFetchInterval` are answered from the cache unless `ignoringCache` is set.
+    public func fetchAnnouncements(
+        for providers: [ProviderID],
+        now: Date = Date(),
+        ignoringCache: Bool = false
+    ) async -> [ProviderID: ResetAnnouncement] {
+        await withTaskGroup(of: (ProviderID, ResetAnnouncement?).self) { group in
+            for provider in providers {
+                group.addTask {
+                    (provider, await self.fetchAnnouncement(for: provider, now: now, ignoringCache: ignoringCache))
+                }
+            }
+            var result: [ProviderID: ResetAnnouncement] = [:]
+            for await (provider, announcement) in group {
+                result[provider] = announcement
+            }
+            return result
+        }
+    }
+
     public func fetchAnnouncement(
         for provider: ProviderID,
-        now: Date = Date()
+        now: Date = Date(),
+        ignoringCache: Bool = false
     ) async -> ResetAnnouncement? {
-        if let entry = cache[provider],
+        if !ignoringCache,
+           let entry = cache[provider],
            now.timeIntervalSince(entry.lastFetchAt) < minimumFetchInterval
         {
             return entry.announcement.flatMap { $0.isActive(at: now) ? $0 : nil }
@@ -88,7 +115,7 @@ public actor ResetAnnouncementService {
     ) -> ResetAnnouncement? {
         switch provider {
         case .codex:
-            return parseCodexForecast(data)
+            return parseCodexForecast(data, now: now)
         case .claude:
             return parseClaudeSummary(data, now: now)
         case .antigravity:
@@ -98,12 +125,31 @@ public actor ResetAnnouncementService {
 
     // MARK: - Codex (`codex-reset.com/api/forecast`)
 
-    static func parseCodexForecast(_ data: Data) -> ResetAnnouncement? {
-        guard let decoded = try? JSONDecoder().decode(WireCodexForecast.self, from: data),
-              let alert = decoded.latest_alert
-        else {
+    /// An imminent-reset watch wins; otherwise the tracker's last confirmed reset (`last_reset_at`) is shown
+    /// as a recent reset notice, which is how a reset that already happened reaches the app.
+    static func parseCodexForecast(_ data: Data, now: Date = Date()) -> ResetAnnouncement? {
+        guard let decoded = try? JSONDecoder().decode(WireCodexForecast.self, from: data) else {
             return nil
         }
+        let watch = decoded.latest_alert.map(codexAlertAnnouncement)
+        if let watch, watch.isActive(at: now) {
+            return watch
+        }
+        if let lastResetAt = DateParsing.parseISO8601(decoded.last_reset_at) {
+            return ResetAnnouncement(
+                id: "codex-reset-\(Int(lastResetAt.timeIntervalSince1970))",
+                provider: .codex,
+                kind: .recentReset,
+                state: .confirmed,
+                summary: "",
+                announcedAt: lastResetAt,
+                sourceURL: URL(string: "https://codex-reset.com")
+            )
+        }
+        return watch
+    }
+
+    private static func codexAlertAnnouncement(_ alert: WireCodexAlert) -> ResetAnnouncement {
         let rawKind = (alert.kind ?? "").lowercased()
         let stateRaw = (alert.state ?? "").lowercased()
         let state = ResetAnnouncement.State(rawValue: stateRaw) ?? .other
@@ -245,6 +291,7 @@ public actor ResetAnnouncementService {
 
     private struct WireCodexForecast: Decodable {
         let latest_alert: WireCodexAlert?
+        let last_reset_at: String?
     }
 
     private struct WireCodexAlert: Decodable {

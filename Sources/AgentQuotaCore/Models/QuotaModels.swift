@@ -151,7 +151,8 @@ public struct ResetAnnouncement: Equatable, Sendable {
         case other
     }
 
-    public static let recentResetMaxAge: TimeInterval = 24 * 3600
+    /// A reset that already happened needs no warning; keep the notice only briefly.
+    public static let recentResetMaxAge: TimeInterval = 12 * 3600
     public static let bankedResetMaxAge: TimeInterval = 7 * 24 * 3600
     private static let futureClockSkewTolerance: TimeInterval = 300
 

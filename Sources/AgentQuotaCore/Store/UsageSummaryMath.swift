@@ -95,15 +95,4 @@ public enum UsageSummaryMath {
             return .warning
         }
         return .normal
-    }
-
-    /// The window needing the most attention: worst pace level first, then highest usage.
-    public static func mostPressingWindow(in summary: ProviderUsageSummary, now: Date = Date()) -> QuotaWindow? {
-        [summary.short, summary.weekly].compactMap { $0 }.max { lhs, rhs in
-            let lhsLevel = paceLevel(for: lhs, now: now)
-            let rhsLevel = paceLevel(for: rhs, now: now)
-            if lhsLevel != rhsLevel { return lhsLevel < rhsLevel }
-            return lhs.usedPercent < rhs.usedPercent
-        }
-    }
-}
+    }}

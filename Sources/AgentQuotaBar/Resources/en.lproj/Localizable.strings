@@ -2,7 +2,8 @@
 "action.refresh" = "Refresh";
 "action.settings" = "Settings";
 "action.quit" = "Quit";
-"action.recheck" = "Recheck CLI";
+"action.recheck" = "Recheck Connections";
+"action.cancel" = "Cancel";
 "action.open_link" = "Details";
 
 "popover.updated_at" = "Updated %@";
@@ -34,6 +35,8 @@
 "popover.recent_reset_badge" = "Reset Notice";
 "popover.recent_reset_at" = "%@ reset notice · %@";
 "popover.recent_reset_fallback" = "%@ recent reset notice";
+"popover.detected_reset_badge" = "Reset Detected";
+"popover.detected_reset_at" = "%1$@ %2$@ reset early · detected %3$@";
 
 "window.five_hour" = "5-Hour Limit";
 "window.seven_day" = "7-Day Limit";
@@ -58,6 +61,8 @@
 "status.not_installed" = "CLI not found";
 "status.login_required" = "CLI login required";
 "status.session_expired" = "Session expired: run the CLI once to renew";
+"status.login_required.claude" = "Sign-in required: sign in from Settings";
+"status.session_expired.claude" = "Sign-in expired: please sign in again";
 "status.keychain_denied" = "Keychain permission needed";
 "status.rate_limited" = "Rate limited (429)";
 "status.rate_limited_until" = "Rate limited (%@)";
@@ -87,10 +92,16 @@
 "settings.reset_layout.periodLists" = "Period lists";
 "settings.reset_layout.providerColumns.hint" = "Stacks 5-hour and weekly reset times inside each provider card.";
 "settings.reset_layout.periodLists.hint" = "Aligns providers across 5-hour and weekly reset columns.";
-"settings.refresh_interval" = "Refresh Interval";
-"settings.interval_minutes" = "Every %d min";
 "settings.launch_at_login" = "Launch at Login";
 "settings.launch_at_login_hint" = "Requires running from an .app bundle.";
+"settings.section.menu_bar" = "Menu Bar";
+"settings.menu_bar_style" = "Display";
+"settings.menu_bar_style.icon" = "Icon";
+"settings.menu_bar_style.rings" = "Rings";
+"settings.menu_bar_style.ringsWithPercent" = "Rings + %";
+"settings.menu_bar_style.icon.hint" = "Shows a single app icon.";
+"settings.menu_bar_style.rings.hint" = "Shows a 5-hour usage ring for each provider.";
+"settings.menu_bar_style.ringsWithPercent.hint" = "Shows a 5-hour usage ring for each provider with the percentage inside.";
 "settings.section.providers" = "Providers & Tracked Limits";
 "settings.section.provider_connection" = "Connection";
 "settings.section.provider_limits" = "Tracked Limits";
@@ -101,6 +112,18 @@
 "settings.limit.seven_day" = "7-Day Limit";
 "settings.limit.model_specific" = "Model-Specific Limits";
 "settings.limit.models_discovered" = "Individual Models";
-"settings.cli_hint.claude" = "Uses Claude Code `statusLine` cache & local credentials.";
+"settings.cli_hint.claude" = "Sign in with your Claude account in the browser to read usage directly. Your Claude Code CLI login is not affected.";
+"settings.claude.account" = "Account";
+"settings.claude.sign_in" = "Sign in with Claude";
+"settings.claude.sign_out" = "Sign Out";
+"settings.claude.waiting" = "Waiting for approval in your browser…";
+"settings.claude.exchanging" = "Finishing sign-in…";
+"settings.claude.reopen_browser" = "Open Browser Again";
+"settings.claude.error.port" = "Couldn't open the local sign-in port (%@).";
+"settings.claude.error.timeout" = "Sign-in timed out. Please try again.";
+"settings.claude.error.denied" = "Sign-in was cancelled or denied.";
+"settings.claude.error.failed" = "Sign-in failed. Please try again.";
+"oauth.callback.success" = "Signed in to Agent Quota Bar. You can close this tab.";
+"oauth.callback.failure" = "Sign-in failed. Return to Agent Quota Bar and try again.";
 "settings.cli_hint.codex" = "Reads local `~/.codex/auth.json`.";
 "settings.cli_hint.antigravity" = "Queries local `agy -p \"/usage\"` (0 tokens).";

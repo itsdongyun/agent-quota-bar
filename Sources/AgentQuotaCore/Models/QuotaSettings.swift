@@ -48,32 +48,16 @@ public struct ProviderLimitPreferences: Codable, Equatable, Sendable {
     }
 }
 
-/// Supported automatic refresh intervals in seconds.
-public enum RefreshIntervalOption: TimeInterval, CaseIterable, Codable, Sendable, Identifiable {
-    case oneMinute = 60
-    case threeMinutes = 180
-    case fiveMinutes = 300
-    case fifteenMinutes = 900
-
-    public var id: TimeInterval { rawValue }
-
-    public var minutes: Int {
-        Int(rawValue / 60)
-    }
-}
-
-/// Persisted user settings for providers, limit filters, and refresh cadence.
+/// Persisted user settings for providers and limit filters. Refresh timing is automatic (`SmartRefreshState`);
+/// a `refreshInterval` key saved by older versions is ignored when decoding.
 public struct QuotaSettings: Codable, Equatable, Sendable {
-    public var refreshInterval: RefreshIntervalOption
     public var providerPreferences: [ProviderID: ProviderLimitPreferences]
 
     public init(
-        refreshInterval: RefreshIntervalOption = .fiveMinutes,
         providerPreferences: [ProviderID: ProviderLimitPreferences] = Dictionary(
             uniqueKeysWithValues: ProviderID.allCases.map { ($0, ProviderLimitPreferences()) }
         )
     ) {
-        self.refreshInterval = refreshInterval
         self.providerPreferences = providerPreferences
     }
 

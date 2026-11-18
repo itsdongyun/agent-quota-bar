@@ -49,6 +49,8 @@ struct PacePlotView: View {
             }
         }
         .aspectRatio(DesignTokens.Layout.chartAspectRatio, contentMode: .fit)
+        // Room for labels of markers on the top or bottom edge, which stay level with their marker.
+        .padding(.vertical, DesignTokens.Layout.chartLabelHeight / 2)
     }
 
     /// Rings first so a weekly marker on the same spot stays on top.
@@ -103,38 +105,73 @@ struct PacePlotView: View {
         )
     }
 
-    /// Places each label beside its marker (right, or left near the edge), nudging vertically to avoid overlaps.
+    /// A label's wanted spot: level with its marker, on the right unless that overflows.
+    private struct LabelSlot {
+        let id: String
+        let desiredY: CGFloat
+        let width: CGFloat
+        let onRight: Bool
+        /// Edge facing the marker: leading edge for right labels, trailing edge for left labels.
+        let edgeX: CGFloat
+    }
+
+    /// Places each label beside its marker, level with it. Labels that would overlap are stacked
+    /// into one column next to their markers, moved vertically only as far as needed to separate them
+    /// and kept in the markers' vertical order, so each label stays at its own marker's height.
     private func placeLabels(in size: CGSize) -> [String: CGPoint] {
         let labelHeight = DesignTokens.Layout.chartLabelHeight
-        let collisionGap = DesignTokens.Layout.chartLabelCollisionGap
-        let minY = labelHeight / 2
-        let maxY = max(minY, size.height - labelHeight / 2)
-        var placed: [(center: CGPoint, width: CGFloat)] = []
-        var result: [String: CGPoint] = [:]
+        let inset = DesignTokens.Layout.chartMarkerSize / 2 + DesignTokens.Layout.chartLabelGap
 
-        for marker in markers {
+        let slots = markers.map { marker -> LabelSlot in
             let anchor = position(of: marker, in: size)
             let width = marker.label.size(withAttributes: [.font: DesignTokens.Typography.chartLabel]).width
-            let offset = DesignTokens.Layout.chartMarkerSize / 2 + DesignTokens.Layout.chartLabelGap + width / 2
-            let rightX = anchor.x + offset
-            let centerX = rightX + width / 2 <= size.width ? rightX : anchor.x - offset
+            let onRight = anchor.x + inset + width <= size.width || anchor.x - inset - width < 0
+            return LabelSlot(
+                id: marker.id,
+                desiredY: anchor.y,
+                width: width,
+                onRight: onRight,
+                edgeX: onRight ? anchor.x + inset : anchor.x - inset
+            )
+        }
 
-            var centerY = max(minY, min(maxY, anchor.y))
-            for delta in [0, -collisionGap, collisionGap, -2 * collisionGap, 2 * collisionGap] {
-                let candidateY = max(minY, min(maxY, anchor.y + delta))
-                let collides = placed.contains { existing in
-                    abs(centerX - existing.center.x) < (width + existing.width) / 2
-                        && abs(candidateY - existing.center.y) < collisionGap
-                }
-                if !collides {
-                    centerY = candidateY
-                    break
-                }
+        func layout(_ group: [LabelSlot]) -> [(slot: LabelSlot, rect: CGRect)] {
+            let sorted = group.sorted { $0.desiredY < $1.desiredY }
+            let span = CGFloat(sorted.count - 1) * labelHeight
+            let meanY = sorted.map(\.desiredY).reduce(0, +) / CGFloat(sorted.count)
+            let topY = max(0, min(size.height - span, meanY - span / 2))
+            // Within a stack, labels share the column edge clear of every marker in it.
+            let rightEdge = sorted.filter(\.onRight).map(\.edgeX).max() ?? 0
+            let leftEdge = sorted.filter { !$0.onRight }.map(\.edgeX).min() ?? 0
+            return sorted.enumerated().map { index, slot in
+                let minX = slot.onRight ? rightEdge : leftEdge - slot.width
+                let centerY = topY + CGFloat(index) * labelHeight
+                return (slot, CGRect(x: minX, y: centerY - labelHeight / 2, width: slot.width, height: labelHeight))
             }
+        }
 
-            let center = CGPoint(x: centerX, y: centerY)
-            placed.append((center, width))
-            result[marker.id] = center
+        func overlaps(_ a: [LabelSlot], _ b: [LabelSlot]) -> Bool {
+            let aRects = layout(a).map(\.rect)
+            return layout(b).contains { placed in
+                aRects.contains { $0.insetBy(dx: 0.5, dy: 0.5).intersects(placed.rect.insetBy(dx: 0.5, dy: 0.5)) }
+            }
+        }
+
+        var groups: [[LabelSlot]] = []
+        for slot in slots.sorted(by: { $0.desiredY < $1.desiredY }) {
+            var current = [slot]
+            // Keep merging until the growing stack no longer overlaps any other stack.
+            while let index = groups.firstIndex(where: { overlaps($0, current) }) {
+                current += groups.remove(at: index)
+            }
+            groups.append(current)
+        }
+
+        var result: [String: CGPoint] = [:]
+        for group in groups {
+            for (slot, rect) in layout(group) {
+                result[slot.id] = CGPoint(x: rect.midX, y: rect.midY)
+            }
         }
         return result
     }
