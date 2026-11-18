@@ -85,23 +85,15 @@
 "settings.chart_layout" = "Chart Layout";
 "settings.chart_layout.by_provider" = "By provider";
 "settings.chart_layout.by_window" = "By limit period";
-"settings.chart_layout.by_provider.hint" = "Shows a dedicated pace chart side by side for each provider.";
-"settings.chart_layout.by_window.hint" = "Groups all providers together into 5-hour and weekly charts.";
 "settings.reset_layout" = "Reset Layout";
 "settings.reset_layout.providerColumns" = "Provider columns";
 "settings.reset_layout.periodLists" = "Period lists";
-"settings.reset_layout.providerColumns.hint" = "Stacks 5-hour and weekly reset times inside each provider card.";
-"settings.reset_layout.periodLists.hint" = "Aligns providers across 5-hour and weekly reset columns.";
 "settings.launch_at_login" = "Launch at Login";
-"settings.launch_at_login_hint" = "Requires running from an .app bundle.";
 "settings.section.menu_bar" = "Menu Bar";
 "settings.menu_bar_style" = "Display";
 "settings.menu_bar_style.icon" = "Icon";
 "settings.menu_bar_style.rings" = "Rings";
 "settings.menu_bar_style.ringsWithPercent" = "Rings + %";
-"settings.menu_bar_style.icon.hint" = "Shows a single app icon.";
-"settings.menu_bar_style.rings.hint" = "Shows a 5-hour usage ring for each provider.";
-"settings.menu_bar_style.ringsWithPercent.hint" = "Shows a 5-hour usage ring for each provider with the percentage inside.";
 "settings.section.providers" = "Providers & Tracked Limits";
 "settings.section.provider_connection" = "Connection";
 "settings.section.provider_limits" = "Tracked Limits";
@@ -112,7 +104,6 @@
 "settings.limit.seven_day" = "7-Day Limit";
 "settings.limit.model_specific" = "Model-Specific Limits";
 "settings.limit.models_discovered" = "Individual Models";
-"settings.cli_hint.claude" = "Sign in with your Claude account in the browser to read usage directly. Your Claude Code CLI login is not affected.";
 "settings.claude.account" = "Account";
 "settings.claude.sign_in" = "Sign in with Claude";
 "settings.claude.sign_out" = "Sign Out";
@@ -125,5 +116,3 @@
 "settings.claude.error.failed" = "Sign-in failed. Please try again.";
 "oauth.callback.success" = "Signed in to Agent Quota Bar. You can close this tab.";
 "oauth.callback.failure" = "Sign-in failed. Return to Agent Quota Bar and try again.";
-"settings.cli_hint.codex" = "Reads local `~/.codex/auth.json`.";
-"settings.cli_hint.antigravity" = "Queries local `agy -p \"/usage\"` (0 tokens).";

@@ -13,17 +13,6 @@ enum L10n {
         return String(format: template, locale: Locale.current, arguments: args)
     }
 
-    static func markdownText(_ key: String) -> Text {
-        let raw = string(key)
-        if let attributed = try? AttributedString(
-            markdown: raw,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) {
-            return Text(attributed)
-        }
-        return Text(raw)
-    }
-
     /// Claude signs in inside the app rather than through a CLI, so its login states read differently.
     static func statusText(_ status: ProviderConnectionStatus, provider: ProviderID? = nil, now: Date = Date()) -> String {
         switch status {

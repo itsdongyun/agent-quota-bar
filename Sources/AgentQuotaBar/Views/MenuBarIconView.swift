@@ -16,10 +16,6 @@ enum MenuBarStyle: String, CaseIterable, Identifiable {
     var title: String {
         L10n.string("settings.menu_bar_style.\(rawValue)")
     }
-
-    var hint: String {
-        L10n.string("settings.menu_bar_style.\(rawValue).hint")
-    }
 }
 
 /// One provider ring in the menu bar: progress of its short-term (5-hour or daily) window.
