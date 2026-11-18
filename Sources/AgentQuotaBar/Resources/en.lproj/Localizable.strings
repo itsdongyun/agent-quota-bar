@@ -39,6 +39,10 @@
 "window.seven_day" = "7-Day Limit";
 "cadence.short.5h" = "5h";
 "cadence.short.7d" = "7d";
+"cadence.short.hours" = "%dh";
+"cadence.short.days" = "%dd";
+"window.model_cadence" = "%1$@ (%2$@)";
+"window.quota_cadence" = "Quota (%@)";
 
 "reset.in" = "Resets in %@";
 "reset.in_pending" = "Resetting soon";
@@ -53,6 +57,7 @@
 "status.connected" = "Connected";
 "status.not_installed" = "CLI not found";
 "status.login_required" = "CLI login required";
+"status.session_expired" = "Session expired: run the CLI once to renew";
 "status.keychain_denied" = "Keychain permission needed";
 "status.rate_limited" = "Rate limited (429)";
 "status.rate_limited_until" = "Rate limited (%@)";

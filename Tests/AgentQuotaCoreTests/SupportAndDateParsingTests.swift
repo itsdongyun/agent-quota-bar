@@ -67,4 +67,43 @@ final class SupportAndDateParsingTests: XCTestCase {
             XCTFail("Expected CancellationError, got \(error)")
         }
     }
+
+    func testSubprocessReturnsWhenGrandchildKeepsPipesOpen() async throws {
+        let started = Date()
+        let output = try await SystemSubprocessRunner().run(
+            binary: "/bin/sh",
+            arguments: ["-c", "sleep 30 & echo done"],
+            environment: [:],
+            currentDirectoryURL: nil,
+            timeout: 10
+        )
+        XCTAssertEqual(output.exitCode, 0)
+        XCTAssertEqual(output.stdoutString.trimmingCharacters(in: .whitespacesAndNewlines), "done")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+    }
+
+    func testSubprocessKillsProcessThatIgnoresSIGTERMAfterTimeout() async throws {
+        let pidFile = FileManager.default.temporaryDirectory.appendingPathComponent("pid-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+        do {
+            _ = try await SystemSubprocessRunner().run(
+                binary: "/bin/sh",
+                arguments: ["-c", "trap '' TERM; echo $$ > '\(pidFile.path)'; while true; do sleep 1; done"],
+                environment: [:],
+                currentDirectoryURL: nil,
+                timeout: 0.5
+            )
+            XCTFail("Expected timeout")
+        } catch let error as SubprocessError {
+            XCTAssertEqual(error, .timedOut(0.5))
+        }
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try XCTUnwrap(pid_t(pidText))
+        var alive = true
+        for _ in 0..<50 where alive {
+            try await Task.sleep(for: .milliseconds(100))
+            alive = kill(pid, 0) == 0
+        }
+        XCTAssertFalse(alive, "Process ignoring SIGTERM must be killed with SIGKILL")
+    }
 }

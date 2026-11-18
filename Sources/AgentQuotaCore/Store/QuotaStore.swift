@@ -28,6 +28,7 @@ public final class QuotaStore {
     private let settingsStore: QuotaSettingsStoring
     private let snapshotStore: QuotaSnapshotStoring
     private var refreshTimerTask: Task<Void, Never>?
+    private var refreshAllTask: Task<Void, Never>?
     private var inFlightProviderTasks: [ProviderID: Task<Bool, Never>] = [:]
 
     public init(
@@ -64,11 +65,29 @@ public final class QuotaStore {
     }
 
     /// Refreshes all enabled providers concurrently so slower CLI probes do not block fast HTTP providers.
-    public func refreshAll() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
+    /// A call made while a refresh runs is skipped, unless `force` is set: then it waits for the running pass
+    /// and starts a new one, so a user-requested recheck always sees the latest login state.
+    public func refreshAll(force: Bool = false) async {
+        if refreshAllTask != nil {
+            guard force else { return }
+            while let running = refreshAllTask {
+                await running.value
+            }
+        }
 
+        isRefreshing = true
+        let task = Task { [weak self] in
+            guard let self else { return }
+            await self.performRefreshAll()
+            // Cleared inside the task so waiters that resume after it see no running pass.
+            self.refreshAllTask = nil
+            self.isRefreshing = false
+        }
+        refreshAllTask = task
+        await task.value
+    }
+
+    private func performRefreshAll() async {
         let enabledProviders = ProviderID.allCases.filter { settings.preferences(for: $0).isEnabled }
         let disabledProviders = ProviderID.allCases.filter { !settings.preferences(for: $0).isEnabled }
         refreshingProviders.formUnion(enabledProviders)
@@ -134,21 +153,25 @@ public final class QuotaStore {
         }
 
         if forceVerify {
-            await refreshAll()
+            await refreshAll(force: true)
         }
     }
 
-    public func visibleWindows(for providerID: ProviderID) -> [QuotaWindow] {
+    /// The provider's windows allowed by the user's filter. Windows whose reset has passed since the last
+    /// successful fetch (offline, rate limited, or loaded from disk) are shown as reset, not with stale usage.
+    public func visibleWindows(for providerID: ProviderID, now: Date = Date()) -> [QuotaWindow] {
         guard let snapshot = snapshots[providerID] else { return [] }
         let prefs = settings.preferences(for: providerID)
-        return snapshot.windows.filter { prefs.allows($0) }
+        return snapshot.windows
+            .filter { prefs.allows($0) }
+            .map { $0.resolvingPassedReset(at: now) }
     }
 
     /// Short and weekly window summaries for each enabled provider, in display order.
-    public func usageSummaries() -> [ProviderUsageSummary] {
+    public func usageSummaries(now: Date = Date()) -> [ProviderUsageSummary] {
         ProviderID.allCases
             .filter { settings.preferences(for: $0).isEnabled }
-            .map { UsageSummaryMath.summary(for: $0, windows: visibleWindows(for: $0)) }
+            .map { UsageSummaryMath.summary(for: $0, windows: visibleWindows(for: $0, now: now)) }
     }
 
     public func setProviderEnabled(_ enabled: Bool, for providerID: ProviderID) {
@@ -230,13 +253,13 @@ public final class QuotaStore {
     private func applyPassiveStatusCheck(_ probed: ProviderConnectionStatus, for providerID: ProviderID) {
         let current = connectionStatuses[providerID] ?? .unknown
         switch probed {
-        case .notInstalled, .loginRequired, .keychainDenied:
+        case .notInstalled, .loginRequired, .sessionExpired, .keychainDenied:
             connectionStatuses[providerID] = probed
         case .connected:
             switch current {
             case .unknown, .notInstalled, .connected:
                 connectionStatuses[providerID] = .connected
-            case .loginRequired, .keychainDenied, .rateLimited, .error:
+            case .loginRequired, .sessionExpired, .keychainDenied, .rateLimited, .error:
                 // Keep active fetch failures until an actual fetch succeeds.
                 break
             }

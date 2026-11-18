@@ -56,6 +56,23 @@ public struct QuotaWindow: Identifiable, Equatable, Codable, Sendable {
         self.windowDurationSeconds = windowDurationSeconds ?? cadence.durationSeconds
     }
 
+    /// Once `resetsAt` has passed, the stored usage belongs to the previous window. Until a fetch reports the
+    /// new window, show it as unused with an unknown reset instead of the stale pre-reset usage.
+    public func resolvingPassedReset(at now: Date = Date()) -> QuotaWindow {
+        guard let resetsAt, resetsAt <= now else { return self }
+        return QuotaWindow(
+            id: id,
+            provider: provider,
+            category: category,
+            cadence: cadence,
+            modelName: modelName,
+            label: label,
+            usedPercent: 0,
+            resetsAt: nil,
+            windowDurationSeconds: windowDurationSeconds
+        )
+    }
+
     public var remainingPercent: Double {
         max(0, min(100, 100 - usedPercent))
     }
@@ -85,6 +102,7 @@ public enum ProviderConnectionStatus: Equatable, Sendable {
     case connected
     case notInstalled
     case loginRequired
+    case sessionExpired
     case keychainDenied
     case rateLimited(retryAfter: Date?)
     case error(ProviderErrorDetail)

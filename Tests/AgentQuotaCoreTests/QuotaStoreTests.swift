@@ -186,4 +186,76 @@ final class QuotaStoreTests: XCTestCase {
             XCTFail("Expected rateLimited status, got \(String(describing: store.connectionStatuses[.claude]))")
         }
     }
+
+    func testForcedRefreshDuringRunningRefreshRunsAnotherPass() async throws {
+        final class Counter: @unchecked Sendable {
+            let lock = NSLock()
+            var fetches = 0
+        }
+        let counter = Counter()
+        let slowClaude = StubQuotaProvider(providerID: .claude) {
+            counter.lock.withLock { counter.fetches += 1 }
+            try await Task.sleep(for: .milliseconds(200))
+            return ProviderQuotaSnapshot(provider: .claude, windows: [])
+        }
+        var settings = QuotaSettings()
+        for id in [ProviderID.codex, .antigravity] {
+            var prefs = settings.preferences(for: id)
+            prefs.isEnabled = false
+            settings.providerPreferences[id] = prefs
+        }
+        let store = QuotaStore(
+            providers: [slowClaude],
+            announcementService: ResetAnnouncementService(
+                transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
+            ),
+            settingsStore: InMemorySettingsStore(stored: settings),
+            snapshotStore: InMemorySnapshotStore()
+        )
+
+        let background = Task { await store.refreshAll() }
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(store.isRefreshing)
+
+        // A timer/popover refresh during a running pass is skipped...
+        await store.refreshAll()
+        XCTAssertEqual(counter.lock.withLock { counter.fetches }, 1)
+
+        // ...but a user recheck waits for it and runs a fresh pass.
+        await store.refreshConnectionStatuses(forceVerify: true)
+        await background.value
+        XCTAssertEqual(counter.lock.withLock { counter.fetches }, 2)
+        XCTAssertFalse(store.isRefreshing)
+    }
+
+    func testVisibleWindowsShowPassedResetAsUnusedInsteadOfStaleUsage() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let cached = ProviderQuotaSnapshot(
+            provider: .claude,
+            windows: [
+                QuotaWindow(
+                    id: "claude.5h", provider: .claude, category: .fiveHour, cadence: .fiveHour,
+                    label: "5h Limit", usedPercent: 95, resetsAt: now.addingTimeInterval(-60)
+                ),
+                QuotaWindow(
+                    id: "claude.7d", provider: .claude, category: .sevenDay, cadence: .sevenDay,
+                    label: "7d Limit", usedPercent: 40, resetsAt: now.addingTimeInterval(3600)
+                ),
+            ],
+            fetchedAt: now.addingTimeInterval(-3600)
+        )
+        let store = QuotaStore(
+            providers: [],
+            announcementService: ResetAnnouncementService(
+                transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
+            ),
+            settingsStore: InMemorySettingsStore(),
+            snapshotStore: InMemorySnapshotStore(stored: [.claude: cached])
+        )
+
+        let windows = store.visibleWindows(for: .claude, now: now)
+        XCTAssertEqual(windows.map(\.usedPercent), [0, 40])
+        XCTAssertNil(windows[0].resetsAt)
+        XCTAssertEqual(windows[1].resetsAt, now.addingTimeInterval(3600))
+    }
 }

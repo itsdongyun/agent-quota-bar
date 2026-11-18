@@ -2,10 +2,10 @@ import Foundation
 import SwiftUI
 import AgentQuotaCore
 
-/// Localization helper backed by `Bundle.module` supporting English (`en`) and Korean (`ko`).
+/// Localization helper backed by `Bundle.appResources` supporting English (`en`) and Korean (`ko`).
 enum L10n {
     static func string(_ key: String) -> String {
-        NSLocalizedString(key, tableName: nil, bundle: .module, value: key, comment: "")
+        NSLocalizedString(key, tableName: nil, bundle: .appResources, value: key, comment: "")
     }
 
     static func format(_ key: String, _ args: CVarArg...) -> String {
@@ -34,6 +34,8 @@ enum L10n {
             return string("status.not_installed")
         case .loginRequired:
             return string("status.login_required")
+        case .sessionExpired:
+            return string("status.session_expired")
         case .keychainDenied:
             return string("status.keychain_denied")
         case let .rateLimited(retryAfter):
@@ -109,7 +111,7 @@ enum L10n {
 
         let calendar = Calendar.current
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: Bundle.module.preferredLocalizations.first ?? "en")
+        formatter.locale = Locale(identifier: Bundle.appResources.preferredLocalizations.first ?? "en")
         formatter.calendar = calendar
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = string("reset.time_format")
@@ -140,19 +142,27 @@ enum L10n {
         case .sevenDay:
             return string("window.seven_day")
         case .modelSpecific:
+            let cadence = cadenceShortText(window)
             if let model = window.modelName {
-                switch window.cadence {
-                case .fiveHour:
-                    return "\(model) (\(string("cadence.short.5h")))"
-                case .sevenDay:
-                    return "\(model) (\(string("cadence.short.7d")))"
-                case .other:
-                    let hours = max(1, Int((window.windowDurationSeconds / 3600).rounded()))
-                    let suffix = hours >= 24 && hours % 24 == 0 ? "\(hours / 24)d" : "\(hours)h"
-                    return "\(model) (\(suffix))"
-                }
+                return format("window.model_cadence", model, cadence)
             }
-            return window.label
+            return format("window.quota_cadence", cadence)
+        }
+    }
+
+    /// Compact window length such as "5h", "7d" or "24h", in the current language.
+    static func cadenceShortText(_ window: QuotaWindow) -> String {
+        switch window.cadence {
+        case .fiveHour:
+            return string("cadence.short.5h")
+        case .sevenDay:
+            return string("cadence.short.7d")
+        case .other:
+            let hours = max(1, Int((window.windowDurationSeconds / 3600).rounded()))
+            if hours >= 24 && hours % 24 == 0 {
+                return format("cadence.short.days", hours / 24)
+            }
+            return format("cadence.short.hours", hours)
         }
     }
 }

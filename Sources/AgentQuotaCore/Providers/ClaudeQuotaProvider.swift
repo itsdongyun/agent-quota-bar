@@ -26,8 +26,6 @@ public actor ClaudeQuotaProvider: QuotaProvider {
     public typealias CredentialReader = @Sendable () -> CredentialReadResult
 
     private static let usageURL = URL(string: "https://api.anthropic.com/api/oauth/usage")!
-    private static let tokenRefreshURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
-    private static let oauthClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     private static let betaHeader = "oauth-2025-04-20"
     private static let keychainService = "Claude Code-credentials"
     private static let cliStatusTTL: TimeInterval = 300
@@ -42,8 +40,6 @@ public actor ClaudeQuotaProvider: QuotaProvider {
     private let statusLineCacheURL: URL
     private let cooldownStore: RateLimitCooldownStoring
     private let nowProvider: @Sendable () -> Date
-    private var cachedSourceCredentials: Credentials?
-    private var cachedRefreshedCredentials: Credentials?
     private var cachedCLIStatus: (status: CLIAuthStatus, fetchedAt: Date)?
     private var inFlightUsageTask: Task<ProviderQuotaSnapshot, Error>?
 
@@ -80,13 +76,15 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         if let status = await fetchCLIAuthStatus(binary: binary) {
             if !status.loggedIn {
                 cachedCLIStatus = nil
-                cachedRefreshedCredentials = nil
                 return .loginRequired
             }
             cachedCLIStatus = (status, Date())
         }
-        switch resolveCredentials() {
-        case .found:
+        switch credentialReader() {
+        case let .found(credentials):
+            if let expiresAt = credentials.expiresAt, expiresAt <= Date() {
+                return .sessionExpired
+            }
             return .connected
         case .notFound:
             return .loginRequired
@@ -133,8 +131,8 @@ public actor ClaudeQuotaProvider: QuotaProvider {
             throw QuotaProviderError.rateLimited(retryAfter: cooldown.blockedUntil)
         }
 
-        var credentials: Credentials
-        switch resolveCredentials() {
+        let credentials: Credentials
+        switch credentialReader() {
         case let .found(creds):
             credentials = creds
         case .notFound:
@@ -146,51 +144,26 @@ public actor ClaudeQuotaProvider: QuotaProvider {
             throw QuotaProviderError.keychainDenied
         }
 
-        if let expiresAt = credentials.expiresAt,
-           expiresAt.timeIntervalSince(now) <= 60,
-           let refreshToken = credentials.refreshToken,
-           !refreshToken.isEmpty
-        {
-            do {
-                credentials = try await refreshOAuthToken(refreshToken: refreshToken, now: now)
-            } catch let error as QuotaProviderError where error == .loginRequired {
-                throw error
-            } catch let error as QuotaProviderError {
-                if case let .rateLimited(retryAfter) = error {
-                    let next = recordRateLimitCooldown(retryAfter: retryAfter, now: now)
-                    throw QuotaProviderError.rateLimited(retryAfter: next.blockedUntil)
-                }
-                if expiresAt.timeIntervalSince(now) <= 0 {
-                    throw error
-                }
-            } catch {
-                if expiresAt.timeIntervalSince(now) <= 0 {
-                    throw error
-                }
-            }
+        // Token refresh belongs to the CLI. Refreshing here rotates the refresh token and logs the CLI out,
+        // so an expired token is reported and the next `claude` run renews it.
+        if let expiresAt = credentials.expiresAt, expiresAt <= now {
+            throw QuotaProviderError.sessionExpired
         }
 
         let response = try await requestUsage(accessToken: credentials.accessToken)
-        if response.statusCode == 401,
-           let refreshToken = credentials.refreshToken,
-           !refreshToken.isEmpty
-        {
-            do {
-                let refreshed = try await refreshOAuthToken(refreshToken: refreshToken, now: now)
-                let retry = try await requestUsage(accessToken: refreshed.accessToken)
+        if response.statusCode == 401 {
+            // The CLI may have renewed its token since it was read; retry once with the newer one.
+            if case let .found(latest) = credentialReader(), latest.accessToken != credentials.accessToken {
+                let retry = try await requestUsage(accessToken: latest.accessToken)
                 return try handleUsageResponse(
                     retry,
                     planName: cliStatus?.resolvedPlanName,
                     accountLabel: cliStatus?.email,
                     now: now
                 )
-            } catch let error as QuotaProviderError {
-                if case let .rateLimited(retryAfter) = error {
-                    let next = recordRateLimitCooldown(retryAfter: retryAfter, now: now)
-                    throw QuotaProviderError.rateLimited(retryAfter: next.blockedUntil)
-                }
-                throw error
             }
+            invalidateAuthCaches()
+            throw QuotaProviderError.sessionExpired
         }
 
         return try handleUsageResponse(
@@ -379,35 +352,7 @@ public actor ClaudeQuotaProvider: QuotaProvider {
 
     // MARK: - Credentials & Network
 
-    private func resolveCredentials() -> CredentialReadResult {
-        switch credentialReader() {
-        case let .found(diskCreds):
-            let sourceChanged = cachedSourceCredentials.map {
-                $0.accessToken != diskCreds.accessToken || $0.refreshToken != diskCreds.refreshToken
-            } ?? true
-            if sourceChanged {
-                cachedSourceCredentials = diskCreds
-                cachedRefreshedCredentials = nil
-                return .found(diskCreds)
-            }
-            if let cached = cachedRefreshedCredentials {
-                // Keep in-memory rotated refreshToken even near/past accessToken expiry.
-                return .found(cached)
-            }
-            return .found(diskCreds)
-        case .notFound:
-            cachedSourceCredentials = nil
-            cachedRefreshedCredentials = nil
-            return .notFound
-        case .keychainDenied:
-            cachedSourceCredentials = nil
-            cachedRefreshedCredentials = nil
-            return .keychainDenied
-        }
-    }
-
     private func invalidateAuthCaches() {
-        cachedRefreshedCredentials = nil
         cachedCLIStatus = nil
     }
 
@@ -478,42 +423,6 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         request.setValue(Self.betaHeader, forHTTPHeaderField: "anthropic-beta")
         request.setValue("claude-cli/2.1.0 (external, cli)", forHTTPHeaderField: "User-Agent")
         return try await transport.perform(request)
-    }
-
-    private func refreshOAuthToken(refreshToken: String, now: Date) async throws -> Credentials {
-        var request = URLRequest(url: Self.tokenRefreshURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: String] = [
-            "grant_type": "refresh_token",
-            "refresh_token": refreshToken,
-            "client_id": Self.oauthClientID,
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let response = try await transport.perform(request)
-        switch response.statusCode {
-        case 200:
-            break
-        case 400, 401:
-            invalidateAuthCaches()
-            throw QuotaProviderError.loginRequired
-        case 429:
-            throw QuotaProviderError.rateLimited(retryAfter: response.retryAfterDate(now: now))
-        default:
-            throw QuotaProviderError.httpError(response.statusCode)
-        }
-        guard let json = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any],
-              let accessToken = (json["access_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !accessToken.isEmpty
-        else {
-            throw QuotaProviderError.invalidResponse(.invalidPayload(.claude))
-        }
-        let nextRefresh = (json["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? refreshToken
-        let expiresIn = json["expires_in"] as? Double
-        let expiresAt = expiresIn.map { now.addingTimeInterval($0) } ?? DateParsing.jwtExpiry(from: accessToken)
-        let refreshed = Credentials(accessToken: accessToken, refreshToken: nextRefresh, expiresAt: expiresAt)
-        cachedRefreshedCredentials = refreshed
-        return refreshed
     }
 
     private func refreshCLIStatusIfNeeded(now: Date) async -> CLIAuthStatus? {

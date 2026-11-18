@@ -4,6 +4,8 @@ import Foundation
 public enum QuotaProviderError: Error, Equatable, Sendable {
     case notInstalled
     case loginRequired
+    /// The CLI's access token expired; the CLI renews it the next time it runs.
+    case sessionExpired
     case keychainDenied
     case rateLimited(retryAfter: Date?)
     case httpError(Int)
@@ -16,6 +18,8 @@ public enum QuotaProviderError: Error, Equatable, Sendable {
             return .notInstalled
         case .loginRequired:
             return .loginRequired
+        case .sessionExpired:
+            return .sessionExpired
         case .keychainDenied:
             return .keychainDenied
         case let .rateLimited(retryAfter):

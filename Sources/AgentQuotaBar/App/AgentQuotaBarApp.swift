@@ -41,11 +41,13 @@ struct AgentQuotaBarApp: App {
         .windowResizability(.contentSize)
     }
 
-    /// Each ring shows the provider's short-window usage in the provider's fixed color.
+    /// Each ring shows the provider's most pressing window (short or weekly) in the provider's fixed color,
+    /// so a nearly exhausted weekly limit is not hidden behind a quiet 5-hour window.
     private func menuBarRings() -> (rings: [MenuBarRing], accessibilityText: String) {
         var parts: [String] = []
-        let rings = store.usageSummaries().map { summary in
-            let window = summary.short
+        let now = Date()
+        let rings = store.usageSummaries(now: now).map { summary in
+            let window = UsageSummaryMath.mostPressingWindow(in: summary, now: now)
             if let window {
                 parts.append("\(summary.provider.displayName) \(Int(window.usedPercent.rounded()))%")
             }

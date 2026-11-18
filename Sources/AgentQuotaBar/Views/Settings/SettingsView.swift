@@ -32,7 +32,7 @@ struct SettingsView: View {
     @State private var selectedProvider: ProviderID = .claude
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DesignTokens.Spacing.none) {
             tabBar
             Divider()
             tabContent
@@ -66,12 +66,12 @@ struct SettingsView: View {
                     .padding(.horizontal, DesignTokens.Spacing.sm)
                     .background(
                         RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-                            .fill(isSelected ? DesignTokens.Colors.settingsTabSelectedBackground : Color.clear)
+                            .fill(isSelected ? DesignTokens.Colors.settingsTabSelectedBackground : DesignTokens.Colors.clear)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
                             .stroke(
-                                isSelected ? DesignTokens.Colors.settingsTabSelectedBorder : Color.clear,
+                                isSelected ? DesignTokens.Colors.settingsTabSelectedBorder : DesignTokens.Colors.clear,
                                 lineWidth: DesignTokens.Stroke.hairline
                             )
                     )
@@ -197,7 +197,7 @@ struct SettingsView: View {
     // MARK: - Providers Tab
 
     private var providersTab: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: DesignTokens.Spacing.none) {
             providerSelectorHeader
             Divider()
             providerDetailForm(for: selectedProvider)

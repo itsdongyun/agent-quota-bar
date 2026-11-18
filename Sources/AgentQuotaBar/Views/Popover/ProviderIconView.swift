@@ -10,7 +10,7 @@ struct ProviderIconView: View {
 
     var body: some View {
         let iconName = NSImage.Name("provider-\(provider.rawValue)")
-        if let icon = Bundle.module.image(forResource: iconName) {
+        if let icon = Bundle.appResources.image(forResource: iconName) {
             Image(nsImage: icon)
                 .renderingMode(provider == .codex ? .template : .original)
                 .resizable()

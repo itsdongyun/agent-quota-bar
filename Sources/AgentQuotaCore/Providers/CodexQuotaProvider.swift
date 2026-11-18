@@ -19,15 +19,11 @@ public actor CodexQuotaProvider: QuotaProvider {
     public typealias CredentialReader = @Sendable () -> Credentials?
 
     private static let usageURL = URL(string: "https://chatgpt.com/backend-api/wham/usage")!
-    private static let tokenRefreshURL = URL(string: "https://auth.openai.com/oauth/token")!
-    private static let oauthClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 
     private let transport: HTTPTransport
     private let subprocess: SubprocessRunning
     private let credentialReader: CredentialReader
     private let environment: [String: String]
-    private var cachedSourceCredentials: Credentials?
-    private var cachedRefreshedCredentials: Credentials?
     private var inFlightUsageTask: Task<ProviderQuotaSnapshot, Error>?
 
     public init(
@@ -46,7 +42,10 @@ public actor CodexQuotaProvider: QuotaProvider {
     }
 
     public func checkConnectionStatus() async -> ProviderConnectionStatus {
-        if resolveCredentials() != nil {
+        if let credentials = credentialReader() {
+            if let expiry = DateParsing.jwtExpiry(from: credentials.accessToken), expiry <= Date() {
+                return .sessionExpired
+            }
             return .connected
         }
         if subprocess.resolveBinary("codex", environment: environment) == nil {
@@ -68,44 +67,26 @@ public actor CodexQuotaProvider: QuotaProvider {
     }
 
     private func performFetchUsage() async throws -> ProviderQuotaSnapshot {
-        guard var credentials = resolveCredentials() else {
+        guard let credentials = credentialReader() else {
             if subprocess.resolveBinary("codex", environment: environment) == nil {
                 throw QuotaProviderError.notInstalled
             }
             throw QuotaProviderError.loginRequired
         }
 
-        if let expiry = DateParsing.jwtExpiry(from: credentials.accessToken),
-           expiry.timeIntervalSinceNow <= 60,
-           let refreshToken = credentials.refreshToken,
-           !refreshToken.isEmpty
-        {
-            do {
-                credentials = try await refreshOAuthToken(refreshToken: refreshToken, accountID: credentials.accountID)
-            } catch let error as QuotaProviderError where error == .loginRequired {
-                throw error
-            } catch {
-                if expiry.timeIntervalSinceNow <= 0 {
-                    throw error
-                }
-            }
+        // Token refresh belongs to the CLI. Refreshing here rotates the refresh token in a way
+        // ~/.codex/auth.json never sees, which logs the CLI out; the next `codex` run renews it instead.
+        if let expiry = DateParsing.jwtExpiry(from: credentials.accessToken), expiry <= Date() {
+            throw QuotaProviderError.sessionExpired
         }
 
         let response = try await requestUsage(credentials: credentials)
-        if response.statusCode == 401,
-           let refreshToken = credentials.refreshToken,
-           !refreshToken.isEmpty
-        {
-            let refreshed = try await refreshOAuthToken(refreshToken: refreshToken, accountID: credentials.accountID)
-            let retry = try await requestUsage(credentials: refreshed)
-            if retry.statusCode == 401 || retry.statusCode == 403 {
-                cachedRefreshedCredentials = nil
+        if response.statusCode == 401 {
+            // The CLI may have renewed its token since it was read; retry once with the newer one.
+            if let latest = credentialReader(), latest.accessToken != credentials.accessToken {
+                return try Self.parseUsageResponse(try await requestUsage(credentials: latest))
             }
-            return try Self.parseUsageResponse(retry)
-        }
-
-        if response.statusCode == 401 || response.statusCode == 403 {
-            cachedRefreshedCredentials = nil
+            throw QuotaProviderError.sessionExpired
         }
         return try Self.parseUsageResponse(response)
     }
@@ -166,10 +147,11 @@ public actor CodexQuotaProvider: QuotaProvider {
         }
 
         for (index, extra) in (decoded.additional_rate_limits ?? []).enumerated() {
-            let rawName = extra.limit_name ?? extra.metered_feature ?? "Model"
-            let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-            let modelName = trimmedName.isEmpty ? "Model \(index + 1)" : trimmedName
-            let slug = modelName.lowercased().replacingOccurrences(of: " ", with: "-")
+            let rawName = (extra.limit_name ?? extra.metered_feature ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            // Unnamed limits get no model name so the UI shows a localized generic label.
+            let modelName: String? = rawName.isEmpty ? nil : rawName
+            let slug = (modelName ?? "model-\(index + 1)").lowercased().replacingOccurrences(of: " ", with: "-")
 
             if let primary = extra.rate_limit?.primary_window,
                let window = makeWindow(
@@ -303,20 +285,6 @@ public actor CodexQuotaProvider: QuotaProvider {
 
     // MARK: - Credentials & Network
 
-    private func resolveCredentials() -> Credentials? {
-        guard let diskCreds = credentialReader() else {
-            cachedSourceCredentials = nil
-            cachedRefreshedCredentials = nil
-            return nil
-        }
-        if diskCreds != cachedSourceCredentials {
-            cachedSourceCredentials = diskCreds
-            cachedRefreshedCredentials = nil
-            return diskCreds
-        }
-        return cachedRefreshedCredentials ?? diskCreds
-    }
-
     static func defaultReadCredentials(homeDirectory: URL, environment: [String: String]) -> Credentials? {
         let codexHome = environment["CODEX_HOME"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
@@ -344,40 +312,6 @@ public actor CodexQuotaProvider: QuotaProvider {
             request.setValue(accountID, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
         return try await transport.perform(request)
-    }
-
-    private func refreshOAuthToken(refreshToken: String, accountID: String?) async throws -> Credentials {
-        var request = URLRequest(url: Self.tokenRefreshURL)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let payload: [String: String] = [
-            "client_id": Self.oauthClientID,
-            "grant_type": "refresh_token",
-            "refresh_token": refreshToken,
-        ]
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let response = try await transport.perform(request)
-        switch response.statusCode {
-        case 200:
-            break
-        case 400, 401:
-            cachedRefreshedCredentials = nil
-            throw QuotaProviderError.loginRequired
-        case 429:
-            throw QuotaProviderError.rateLimited(retryAfter: response.retryAfterDate())
-        default:
-            throw QuotaProviderError.httpError(response.statusCode)
-        }
-        guard let json = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any],
-              let accessToken = (json["access_token"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !accessToken.isEmpty
-        else {
-            throw QuotaProviderError.invalidResponse(.invalidPayload(.codex))
-        }
-        let nextRefresh = (json["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? refreshToken
-        let refreshed = Credentials(accessToken: accessToken, refreshToken: nextRefresh, accountID: accountID)
-        cachedRefreshedCredentials = refreshed
-        return refreshed
     }
 
     // MARK: - Wire Models

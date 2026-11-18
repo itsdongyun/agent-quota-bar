@@ -101,10 +101,12 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertEqual(snapshot.windows[2].modelName, "Codex-Spark")
     }
 
-    func testCodexRefreshesOn401() async throws {
-        let refreshedJSON = """
-        { "access_token": "new-access", "refresh_token": "new-refresh" }
-        """
+    func testCodexRetriesWithCLIRenewedTokenOn401WithoutRefreshing() async throws {
+        final class CredBox: @unchecked Sendable {
+            let lock = NSLock()
+            var reads = 0
+        }
+        let box = CredBox()
         let usageJSON = """
         {
           "plan_type": "plus",
@@ -115,12 +117,33 @@ final class ProviderParsingTests: XCTestCase {
         """
         let transport = MockHTTPTransport(handlers: [
             { _ in HTTPResponseData(data: Data(), statusCode: 401) },
-            { _ in HTTPResponseData(data: Data(refreshedJSON.utf8), statusCode: 200) },
             { req in
-                XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer new-access")
+                XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer cli-renewed")
                 return HTTPResponseData(data: Data(usageJSON.utf8), statusCode: 200)
             },
         ])
+        let provider = CodexQuotaProvider(
+            transport: transport,
+            subprocess: MockSubprocessRunner(resolvedPaths: ["codex": "/usr/local/bin/codex"]),
+            credentialReader: {
+                // The CLI renews auth.json between the first read and the 401.
+                let read = box.lock.withLock { () -> Int in
+                    box.reads += 1
+                    return box.reads
+                }
+                let token = read == 1 ? "old-access" : "cli-renewed"
+                return CodexQuotaProvider.Credentials(accessToken: token, refreshToken: "rt-1", accountID: "acct-1")
+            }
+        )
+
+        let snapshot = try await provider.fetchUsage()
+        XCTAssertEqual(snapshot.windows.first?.usedPercent, 10)
+        XCTAssertEqual(transport.recordedRequests.count, 2)
+        XCTAssertFalse(transport.recordedRequests.contains { $0.url?.path.contains("oauth/token") == true })
+    }
+
+    func testCodexReportsSessionExpiredOn401WhenCLIHasNotRenewed() async throws {
+        let transport = MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 401))
         let provider = CodexQuotaProvider(
             transport: transport,
             subprocess: MockSubprocessRunner(resolvedPaths: ["codex": "/usr/local/bin/codex"]),
@@ -129,9 +152,13 @@ final class ProviderParsingTests: XCTestCase {
             }
         )
 
-        let snapshot = try await provider.fetchUsage()
-        XCTAssertEqual(snapshot.windows.first?.usedPercent, 10)
-        XCTAssertEqual(transport.recordedRequests.count, 3)
+        do {
+            _ = try await provider.fetchUsage()
+            XCTFail("Expected sessionExpired")
+        } catch let error as QuotaProviderError {
+            XCTAssertEqual(error, .sessionExpired)
+        }
+        XCTAssertEqual(transport.recordedRequests.count, 1)
     }
 
     func testAntigravityParsesPrintUsageJSON() throws {
@@ -301,38 +328,11 @@ final class ProviderParsingTests: XCTestCase {
         XCTAssertFalse(agy?.isActive(at: now.addingTimeInterval(13 * 3600)) == true)
     }
 
-    func testClaudePreservesRotatedRefreshTokenWithin30SecondsOfExpiryAndCoalesces() async throws {
-        final class Counter: @unchecked Sendable {
-            let lock = NSLock()
-            var refreshCalls = 0
-            var usageCalls = 0
-        }
-        let counter = Counter()
-        let usageJSON = #"{"five_hour":{"utilization":22.0,"resets_at":"2026-11-17T06:00:00Z"}}"#
+    func testClaudeNeverRefreshesExpiredTokenAndReportsSessionExpired() async throws {
         let transport = MockHTTPTransport(handlers: [
-            { req in
-                if req.url?.path.contains("oauth/token") == true {
-                    let body = String(data: req.httpBody ?? Data(), encoding: .utf8) ?? ""
-                    let callIndex = counter.lock.withLock { () -> Int in
-                        counter.refreshCalls += 1
-                        return counter.refreshCalls
-                    }
-                    if callIndex == 1 {
-                        XCTAssertTrue(body.contains("rt-initial"))
-                        return HTTPResponseData(
-                            data: Data(#"{"access_token":"at-rotated-1","refresh_token":"rt-rotated-1","expires_in":15}"#.utf8),
-                            statusCode: 200
-                        )
-                    } else {
-                        XCTAssertTrue(body.contains("rt-rotated-1"), "Expected rotated refresh token, got body: \(body)")
-                        return HTTPResponseData(
-                            data: Data(#"{"access_token":"at-rotated-2","refresh_token":"rt-rotated-2","expires_in":3600}"#.utf8),
-                            statusCode: 200
-                        )
-                    }
-                }
-                counter.lock.withLock { counter.usageCalls += 1 }
-                return HTTPResponseData(data: Data(usageJSON.utf8), statusCode: 200)
+            { _ in
+                XCTFail("An expired token must not be sent or refreshed")
+                return HTTPResponseData(data: Data(), statusCode: 500)
             },
         ])
         let cliOK = #"{"loggedIn":true,"email":"a@b.com","subscriptionType":"pro"}"#
@@ -341,35 +341,39 @@ final class ProviderParsingTests: XCTestCase {
             handler: { _, _ in SubprocessOutput(exitCode: 0, stdout: Data(cliOK.utf8), stderr: Data()) }
         )
         let missingStatusLine = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).json")
-        let initialExpiry = Date().addingTimeInterval(10)
         let provider = ClaudeQuotaProvider(
             transport: transport,
             subprocess: subprocess,
             credentialReader: {
                 .found(ClaudeQuotaProvider.Credentials(
-                    accessToken: "at-initial",
+                    accessToken: "at-expired",
                     refreshToken: "rt-initial",
-                    expiresAt: initialExpiry
+                    expiresAt: Date().addingTimeInterval(-10)
                 ))
             },
             statusLineCacheURL: missingStatusLine,
             cooldownStore: InMemoryRateLimitCooldownStore()
         )
 
-        // First fetch rotates refresh token to rt-rotated-1 with expires_in = 15s (< 30s).
-        _ = try await provider.fetchUsage()
-        // Second fetch (also coalesced concurrently) must use rt-rotated-1, NOT disk rt-initial.
-        async let first = provider.fetchUsage()
-        async let second = provider.fetchUsage()
-        let snapshots = try await [first, second]
-        XCTAssertEqual(snapshots.count, 2)
-        XCTAssertEqual(counter.refreshCalls, 2)
+        let fetches = [Task { try await provider.fetchUsage() }, Task { try await provider.fetchUsage() }]
+        for fetch in fetches {
+            do {
+                _ = try await fetch.value
+                XCTFail("Expected sessionExpired")
+            } catch let error as QuotaProviderError {
+                XCTAssertEqual(error, .sessionExpired)
+            }
+        }
+        XCTAssertEqual(transport.recordedRequests.count, 0)
+        let status = await provider.checkConnectionStatus()
+        XCTAssertEqual(status, .sessionExpired)
     }
 
-    func testClaudeDoesNotCacheLoggedOutCLIStatusAndMaps429OnRefresh() async throws {
+    func testClaudeDoesNotCacheLoggedOutCLIStatusAndRecordsRetried429Once() async throws {
         final class Flag: @unchecked Sendable {
             let lock = NSLock()
             var loggedIn = false
+            var reads = 0
         }
         let flag = Flag()
         let subprocess = MockSubprocessRunner(
@@ -381,26 +385,31 @@ final class ProviderParsingTests: XCTestCase {
             }
         )
         let transport = MockHTTPTransport(handlers: [
+            { _ in HTTPResponseData(data: Data(), statusCode: 401) },
             { req in
-                if req.url?.path.contains("oauth/token") == true {
-                    return HTTPResponseData(data: Data(), statusCode: 429, headers: ["Retry-After": "45"])
-                }
-                return HTTPResponseData(data: Data(), statusCode: 401)
+                XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer at-renewed")
+                return HTTPResponseData(data: Data(), statusCode: 429, headers: ["Retry-After": "45"])
             },
         ])
         let missingStatusLine = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).json")
+        let cooldownStore = InMemoryRateLimitCooldownStore()
         let provider = ClaudeQuotaProvider(
             transport: transport,
             subprocess: subprocess,
             credentialReader: {
-                .found(ClaudeQuotaProvider.Credentials(
-                    accessToken: "expired-at",
+                // The CLI renews its token between the first read and the 401.
+                let read = flag.lock.withLock { () -> Int in
+                    flag.reads += 1
+                    return flag.reads
+                }
+                return .found(ClaudeQuotaProvider.Credentials(
+                    accessToken: read == 1 ? "at-stale" : "at-renewed",
                     refreshToken: "rt-1",
-                    expiresAt: Date().addingTimeInterval(-10)
+                    expiresAt: Date().addingTimeInterval(3600)
                 ))
             },
             statusLineCacheURL: missingStatusLine,
-            cooldownStore: InMemoryRateLimitCooldownStore()
+            cooldownStore: cooldownStore
         )
 
         do {
@@ -421,6 +430,8 @@ final class ProviderParsingTests: XCTestCase {
             }
             XCTAssertNotNil(retryAfter)
         }
+        XCTAssertEqual(cooldownStore.load()?.consecutiveFailures, 1)
+        XCTAssertFalse(transport.recordedRequests.contains { $0.url?.path.contains("oauth/token") == true })
     }
 
     func testClaudeUsesFreshStatusLineCacheWithoutHTTPCall() async throws {
@@ -569,10 +580,8 @@ final class ProviderParsingTests: XCTestCase {
         }
         """
         let transport = MockHTTPTransport(handlers: [
-            { _ in HTTPResponseData(data: Data(), statusCode: 401) },
-            { _ in HTTPResponseData(data: Data(#"{"access_token":"at-refreshed","refresh_token":"rt-2"}"#.utf8), statusCode: 200) },
             { req in
-                XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer at-refreshed")
+                XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer at-1")
                 return HTTPResponseData(data: Data(usageJSON.utf8), statusCode: 200)
             },
             { req in

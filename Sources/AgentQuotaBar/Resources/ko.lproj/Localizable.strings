@@ -39,6 +39,10 @@
 "window.seven_day" = "7일 한도";
 "cadence.short.5h" = "5h";
 "cadence.short.7d" = "7d";
+"cadence.short.hours" = "%dh";
+"cadence.short.days" = "%dd";
+"window.model_cadence" = "%1$@ (%2$@)";
+"window.quota_cadence" = "한도 (%@)";
 
 "reset.in" = "%@ 후 리셋";
 "reset.in_pending" = "곧 리셋";
@@ -53,6 +57,7 @@
 "status.connected" = "연동됨";
 "status.not_installed" = "CLI 미설치";
 "status.login_required" = "CLI 로그인 필요";
+"status.session_expired" = "세션 만료: CLI를 한 번 실행하면 갱신됩니다";
 "status.keychain_denied" = "키체인 접근 허용 필요";
 "status.rate_limited" = "요청 제한(429)";
 "status.rate_limited_until" = "요청 제한 (%@)";

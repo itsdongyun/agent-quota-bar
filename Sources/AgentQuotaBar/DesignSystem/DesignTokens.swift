@@ -28,6 +28,7 @@ enum DesignTokens {
         static let statusNeutral = Color.secondary
 
         // Surface & border colors
+        static let clear = Color.clear
         static let cardBackground = Color.primary.opacity(0.05)
         static let borderSubtle = Color.primary.opacity(0.10)
         static let shadowColor = Color.black.opacity(0.12)
@@ -62,6 +63,7 @@ enum DesignTokens {
     }
 
     enum Spacing {
+        static let none: CGFloat = 0
         static let xxxs: CGFloat = 2
         static let xxs: CGFloat = 4
         static let xs: CGFloat = 6

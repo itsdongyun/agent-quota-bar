@@ -96,6 +96,12 @@ public struct SystemSubprocessRunner: SubprocessRunning {
         return nil
     }
 
+    /// How long to keep reading after the child exits. A grandchild that inherited stdout/stderr can hold
+    /// the pipes open indefinitely, so the result must not wait for EOF alone.
+    static let pipeDrainGrace: DispatchTimeInterval = .seconds(1)
+    /// How long a process gets to exit after SIGTERM before it is sent SIGKILL.
+    static let killEscalationDelay: DispatchTimeInterval = .seconds(2)
+
     public func run(
         binary: String,
         arguments: [String],
@@ -119,10 +125,18 @@ public struct SystemSubprocessRunner: SubprocessRunning {
             let lock = NSLock()
             var finished = false
             var launched = false
+            var terminationRequested = false
             var stdoutData = Data()
             var stderrData = Data()
+            var stdoutEOF = false
+            var stderrEOF = false
+            var exitStatus: Int32?
             var timeoutTimer: DispatchSourceTimer?
+            var drainTimer: DispatchSourceTimer?
+            /// Lives independently of `finished`: the result is reported right after SIGTERM,
+            /// but the process still has to be killed if it ignores it.
             var killTimer: DispatchSourceTimer?
+            var readHandles: [FileHandle] = []
             var continuation: CheckedContinuation<SubprocessOutput, Error>?
             var pendingResult: Result<SubprocessOutput, Error>?
 
@@ -141,48 +155,116 @@ public struct SystemSubprocessRunner: SubprocessRunning {
             }
 
             func complete(_ result: Result<SubprocessOutput, Error>) {
-                let cont = lock.withLock { () -> CheckedContinuation<SubprocessOutput, Error>? in
-                    if finished { return nil }
+                let (cont, handles, shouldReport) = lock.withLock {
+                    () -> (CheckedContinuation<SubprocessOutput, Error>?, [FileHandle], Bool) in
+                    if finished { return (nil, [], false) }
                     finished = true
                     timeoutTimer?.cancel()
                     timeoutTimer = nil
-                    killTimer?.cancel()
-                    killTimer = nil
+                    drainTimer?.cancel()
+                    drainTimer = nil
+                    let handles = readHandles
+                    readHandles = []
                     if let continuation {
                         self.continuation = nil
-                        return continuation
+                        return (continuation, handles, true)
                     }
                     self.pendingResult = result
-                    return nil
+                    return (nil, handles, true)
+                }
+                guard shouldReport else { return }
+                for handle in handles {
+                    handle.readabilityHandler = nil
                 }
                 cont?.resume(with: result)
             }
 
-            func terminateProcessWithEscalation(_ process: Process) {
-                let shouldTerminate = lock.withLock { launched && !finished }
-                guard shouldTerminate else { return }
-                if process.isRunning {
-                    process.terminate()
-                    let pid = process.processIdentifier
-                    let killer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-                    killer.schedule(deadline: .now() + .seconds(2))
-                    killer.setEventHandler {
-                        if process.isRunning, pid > 0 {
-                            kill(pid, SIGKILL)
+            func attachReader(_ handle: FileHandle, isStdout: Bool) {
+                lock.withLock { readHandles.append(handle) }
+                handle.readabilityHandler = { [self] handle in
+                    let chunk = handle.availableData
+                    let ready = lock.withLock { () -> Bool in
+                        if chunk.isEmpty {
+                            if isStdout { stdoutEOF = true } else { stderrEOF = true }
+                        } else if isStdout {
+                            stdoutData.append(chunk)
+                        } else {
+                            stderrData.append(chunk)
                         }
+                        return exitStatus != nil && stdoutEOF && stderrEOF
                     }
-                    let installed = lock.withLock { () -> Bool in
-                        guard !finished else { return false }
-                        killTimer?.cancel()
-                        killTimer = killer
-                        return true
+                    if chunk.isEmpty {
+                        handle.readabilityHandler = nil
                     }
-                    if installed {
-                        killer.resume()
-                    } else {
-                        killer.cancel()
+                    if ready {
+                        completeWithCapturedOutput()
                     }
                 }
+            }
+
+            func processExited(status: Int32) {
+                let (ready, alreadyFinished) = lock.withLock { () -> (Bool, Bool) in
+                    exitStatus = status
+                    return (stdoutEOF && stderrEOF, finished)
+                }
+                if alreadyFinished { return }
+                if ready {
+                    completeWithCapturedOutput()
+                    return
+                }
+                let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+                timer.schedule(deadline: .now() + SystemSubprocessRunner.pipeDrainGrace)
+                timer.setEventHandler { [self] in
+                    completeWithCapturedOutput()
+                }
+                let installed = lock.withLock { () -> Bool in
+                    guard !finished else { return false }
+                    drainTimer = timer
+                    return true
+                }
+                if installed {
+                    timer.resume()
+                } else {
+                    // A source must not be released while suspended: cancel, then resume so it can be disposed.
+                    timer.cancel()
+                    timer.resume()
+                }
+            }
+
+            private func completeWithCapturedOutput() {
+                let output = lock.withLock { () -> SubprocessOutput? in
+                    guard let exitStatus else { return nil }
+                    return SubprocessOutput(exitCode: exitStatus, stdout: stdoutData, stderr: stderrData)
+                }
+                if let output {
+                    complete(.success(output))
+                }
+            }
+
+            func terminateProcessWithEscalation(_ process: Process) {
+                let shouldTerminate = lock.withLock { () -> Bool in
+                    guard launched, !terminationRequested else { return false }
+                    terminationRequested = true
+                    return true
+                }
+                guard shouldTerminate, process.isRunning else { return }
+                process.terminate()
+                let pid = process.processIdentifier
+                let killer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+                killer.schedule(deadline: .now() + SystemSubprocessRunner.killEscalationDelay)
+                killer.setEventHandler { [self] in
+                    if process.isRunning, pid > 0 {
+                        kill(pid, SIGKILL)
+                    }
+                    // Cancelling releases this handler, which breaks the state -> timer -> handler cycle.
+                    let timer = lock.withLock { () -> DispatchSourceTimer? in
+                        defer { killTimer = nil }
+                        return killTimer
+                    }
+                    timer?.cancel()
+                }
+                lock.withLock { killTimer = killer }
+                killer.resume()
             }
         }
 
@@ -199,38 +281,16 @@ public struct SystemSubprocessRunner: SubprocessRunning {
                     return
                 }
 
-                let group = DispatchGroup()
-
-                group.enter()
-                DispatchQueue.global(qos: .utility).async {
-                    let data = (try? stdoutPipe.fileHandleForReading.readToEnd()) ?? Data()
-                    state.lock.withLock { state.stdoutData = data }
-                    group.leave()
-                }
-
-                group.enter()
-                DispatchQueue.global(qos: .utility).async {
-                    let data = (try? stderrPipe.fileHandleForReading.readToEnd()) ?? Data()
-                    state.lock.withLock { state.stderrData = data }
-                    group.leave()
-                }
+                state.attachReader(stdoutPipe.fileHandleForReading, isStdout: true)
+                state.attachReader(stderrPipe.fileHandleForReading, isStdout: false)
 
                 process.terminationHandler = { proc in
-                    group.notify(queue: DispatchQueue.global(qos: .utility)) {
-                        let output = state.lock.withLock {
-                            SubprocessOutput(
-                                exitCode: proc.terminationStatus,
-                                stdout: state.stdoutData,
-                                stderr: state.stderrData
-                            )
-                        }
-                        state.complete(.success(output))
-                    }
+                    state.processExited(status: proc.terminationStatus)
                 }
 
                 do {
                     try process.run()
-                    // Close parent's write ends so EOF is delivered strictly when child exits.
+                    // Close parent's write ends so EOF is delivered once every holder of the pipes exits.
                     try? stdoutPipe.fileHandleForWriting.close()
                     try? stderrPipe.fileHandleForWriting.close()
 
@@ -258,7 +318,9 @@ public struct SystemSubprocessRunner: SubprocessRunning {
                     if installed {
                         timer.resume()
                     } else {
+                        // A source must not be released while suspended: cancel, then resume so it can be disposed.
                         timer.cancel()
+                        timer.resume()
                     }
                 } catch {
                     try? stdoutPipe.fileHandleForWriting.close()
