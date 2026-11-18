@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 import AgentQuotaCore
 
@@ -126,17 +125,8 @@ struct UsageResetView: View {
     private func providerLabel(_ summary: ProviderUsageSummary) -> some View {
         let provider = summary.provider
         let status = statuses[provider] ?? .unknown
-        let iconName = NSImage.Name("provider-\(provider.rawValue)")
         return HStack(spacing: DesignTokens.Spacing.xxs) {
-            if let icon = Bundle.module.image(forResource: iconName) {
-                Image(nsImage: icon)
-                    .renderingMode(provider == .codex ? .template : .original)
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(DesignTokens.Colors.textPrimary)
-                    .frame(width: DesignTokens.Layout.resetProviderIconSize, height: DesignTokens.Layout.resetProviderIconSize)
-                    .accessibilityHidden(true)
-            }
+            ProviderIconView(provider: provider, size: DesignTokens.Layout.resetProviderIconSize)
             Text(provider.displayName)
                 .font(.system(size: DesignTokens.Typography.captionSize, weight: .semibold))
                 .foregroundStyle(DesignTokens.Colors.textPrimary)

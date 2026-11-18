@@ -27,6 +27,7 @@
 "popover.no_visible_limits" = "표시할 한도가 없습니다. 설정에서 한도를 선택해 주세요.";
 "popover.codex_reset_badge" = "Codex 글로벌 리셋 예고";
 "popover.codex_reset_target" = "예정: %@";
+"popover.reset_badge" = "리셋 예고";
 
 "window.five_hour" = "5시간 한도";
 "window.seven_day" = "7일 한도";
@@ -63,8 +64,8 @@
 "settings.chart_layout.by_provider" = "프로바이더별";
 "settings.chart_layout.by_window" = "한도 기간별";
 "settings.reset_layout" = "리셋 보기 방식";
-"settings.reset_layout.providerColumns" = "5. 서비스 3열";
-"settings.reset_layout.periodLists" = "6. 기간별 두 목록";
+"settings.reset_layout.providerColumns" = "프로바이더별 열";
+"settings.reset_layout.periodLists" = "기간별 목록";
 "settings.refresh_interval" = "갱신 주기";
 "settings.interval_minutes" = "%d분마다";
 "settings.launch_at_login" = "로그인 시 자동 실행";
@@ -75,29 +76,6 @@
 "settings.limit.seven_day" = "7일 한도";
 "settings.limit.model_specific" = "모델별 한도";
 "settings.limit.models_discovered" = "세부 모델 선택";
-"settings.cli_hint.claude" = "로컬 `claude` 키체인/자격 증명을 사용합니다.";
+"settings.cli_hint.claude" = "Claude Code `statusLine` 캐시와 로컬 자격 증명을 사용합니다.";
 "settings.cli_hint.codex" = "로컬 `~/.codex/auth.json`을 사용합니다.";
 "settings.cli_hint.antigravity" = "로컬 `agy -p \"/usage\"`로 조회합니다 (토큰 0 소모).";
-
-"mock.title" = "목데이터 조절";
-"mock.menu_item" = "목데이터 조절…";
-"mock.section.presets" = "프리셋";
-"mock.section.other" = "기타";
-"mock.preset.design" = "시안 기본";
-"mock.preset.relaxed" = "모두 여유";
-"mock.preset.over_pace" = "페이스 초과";
-"mock.preset.near_limit" = "한도 임박";
-"mock.preset.just_reset" = "리셋 직후";
-"mock.preset.errors" = "오류 상태";
-"mock.preset.loading" = "로딩 중";
-"mock.preset.empty" = "데이터 없음";
-"mock.status" = "상태";
-"mock.status.loading" = "로딩 중";
-"mock.status.error" = "응답 오류";
-"mock.plan" = "플랜";
-"mock.short_cadence" = "짧은 한도 주기";
-"mock.cadence.five_hour" = "5시간";
-"mock.cadence.daily" = "일간";
-"mock.used" = "사용률";
-"mock.elapsed" = "경과";
-"mock.codex_banner" = "Codex 글로벌 리셋 배너";

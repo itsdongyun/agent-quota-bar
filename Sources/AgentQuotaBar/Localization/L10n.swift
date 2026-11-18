@@ -95,38 +95,6 @@ enum L10n {
         return format("reset.minutes", minutes)
     }
 
-    static func mockPresetTitle(_ preset: MockScenarioPreset) -> String {
-        switch preset {
-        case .design: return string("mock.preset.design")
-        case .relaxed: return string("mock.preset.relaxed")
-        case .overPace: return string("mock.preset.over_pace")
-        case .nearLimit: return string("mock.preset.near_limit")
-        case .justReset: return string("mock.preset.just_reset")
-        case .errors: return string("mock.preset.errors")
-        case .loading: return string("mock.preset.loading")
-        case .empty: return string("mock.preset.empty")
-        }
-    }
-
-    static func mockStatusTitle(_ status: MockProviderStatus) -> String {
-        switch status {
-        case .connected: return string("status.connected")
-        case .loading: return string("mock.status.loading")
-        case .notInstalled: return string("status.not_installed")
-        case .loginRequired: return string("status.login_required")
-        case .keychainDenied: return string("status.keychain_denied")
-        case .rateLimited: return string("status.rate_limited")
-        case .error: return string("mock.status.error")
-        }
-    }
-
-    static func mockCadenceTitle(_ cadence: MockShortCadence) -> String {
-        switch cadence {
-        case .fiveHour: return string("mock.cadence.five_hour")
-        case .daily: return string("mock.cadence.daily")
-        }
-    }
-
     static func slotTitle(_ slot: UsageSlot) -> String {
         switch slot {
         case .short: return string("popover.slot_short")

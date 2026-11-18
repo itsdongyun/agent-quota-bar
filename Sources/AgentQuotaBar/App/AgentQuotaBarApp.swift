@@ -8,14 +8,11 @@ struct AgentQuotaBarApp: App {
     @AppStorage("AgentQuotaBar.PopoverResetLayout") private var resetLayout: PopoverResetLayout = .providerColumns
     @State private var store: QuotaStore
     @State private var launchAtLogin: LaunchAtLoginManager
-    /// Set only when launched with `--mock-data`.
-    @State private var mockController: MockDataController?
 
     init() {
-        let (quotaStore, mockController) = Self.makeStore()
+        let quotaStore = QuotaStore()
         _store = State(initialValue: quotaStore)
         _launchAtLogin = State(initialValue: LaunchAtLoginManager())
-        _mockController = State(initialValue: mockController)
         quotaStore.start()
     }
 
@@ -24,8 +21,7 @@ struct AgentQuotaBarApp: App {
             UsagePopoverView(
                 store: store,
                 chartLayout: chartLayout,
-                resetLayout: resetLayout,
-                isMockMode: mockController != nil
+                resetLayout: resetLayout
             )
         } label: {
             let rings = menuBarRings()
@@ -43,30 +39,6 @@ struct AgentQuotaBarApp: App {
             .background(DesktopWindowPresence())
         }
         .windowResizability(.contentSize)
-
-        Window(L10n.string("mock.title"), id: "mock-data") {
-            if let mockController {
-                MockDataControlView(controller: mockController)
-                    .background(DesktopWindowPresence())
-            }
-        }
-        .windowResizability(.contentSize)
-    }
-
-    /// `--mock-data` swaps every provider for live-editable mock data (see `MockDataControlView`).
-    private static func makeStore() -> (QuotaStore, MockDataController?) {
-        guard CommandLine.arguments.contains("--mock-data") else {
-            return (QuotaStore(), nil)
-        }
-        let source = MockScenarioSource()
-        let store = QuotaStore(
-            providers: MockQuotaProvider.all(source: source),
-            announcementService: CodexResetAnnouncementService(
-                transport: MockAnnouncementTransport(source: source),
-                minimumFetchInterval: 0
-            )
-        )
-        return (store, MockDataController(source: source, store: store))
     }
 
     /// Each ring shows the provider's short-window usage in the provider's fixed color.

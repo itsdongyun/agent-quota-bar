@@ -27,6 +27,7 @@
 "popover.no_visible_limits" = "No visible limits selected. Enable limits in Settings.";
 "popover.codex_reset_badge" = "Codex Global Reset Watch";
 "popover.codex_reset_target" = "Target: %@";
+"popover.reset_badge" = "Reset Watch";
 
 "window.five_hour" = "5-Hour Limit";
 "window.seven_day" = "7-Day Limit";
@@ -63,8 +64,8 @@
 "settings.chart_layout.by_provider" = "By provider";
 "settings.chart_layout.by_window" = "By limit period";
 "settings.reset_layout" = "Reset Layout";
-"settings.reset_layout.providerColumns" = "5. Provider Columns";
-"settings.reset_layout.periodLists" = "6. Two Period Lists";
+"settings.reset_layout.providerColumns" = "Provider columns";
+"settings.reset_layout.periodLists" = "Period lists";
 "settings.refresh_interval" = "Refresh Interval";
 "settings.interval_minutes" = "Every %d min";
 "settings.launch_at_login" = "Launch at Login";
@@ -75,29 +76,6 @@
 "settings.limit.seven_day" = "7-Day Limit";
 "settings.limit.model_specific" = "Model-Specific Limits";
 "settings.limit.models_discovered" = "Individual Models";
-"settings.cli_hint.claude" = "Reads local `claude` Keychain/credentials.";
+"settings.cli_hint.claude" = "Uses Claude Code `statusLine` cache & local credentials.";
 "settings.cli_hint.codex" = "Reads local `~/.codex/auth.json`.";
 "settings.cli_hint.antigravity" = "Queries local `agy -p \"/usage\"` (0 tokens).";
-
-"mock.title" = "Mock Data";
-"mock.menu_item" = "Mock Data…";
-"mock.section.presets" = "Presets";
-"mock.section.other" = "Other";
-"mock.preset.design" = "Design sample";
-"mock.preset.relaxed" = "All relaxed";
-"mock.preset.over_pace" = "Over pace";
-"mock.preset.near_limit" = "Near limit";
-"mock.preset.just_reset" = "Just reset";
-"mock.preset.errors" = "Errors";
-"mock.preset.loading" = "Loading";
-"mock.preset.empty" = "No data";
-"mock.status" = "Status";
-"mock.status.loading" = "Loading";
-"mock.status.error" = "Response error";
-"mock.plan" = "Plan";
-"mock.short_cadence" = "Short limit period";
-"mock.cadence.five_hour" = "5 hours";
-"mock.cadence.daily" = "Daily";
-"mock.used" = "Usage";
-"mock.elapsed" = "Elapsed";
-"mock.codex_banner" = "Codex global reset banner";

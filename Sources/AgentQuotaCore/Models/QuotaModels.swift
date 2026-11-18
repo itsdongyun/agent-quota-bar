@@ -23,7 +23,7 @@ public enum QuotaWindowCategory: String, CaseIterable, Codable, Sendable, Hashab
 }
 
 /// A single normalized quota window across any provider.
-public struct QuotaWindow: Identifiable, Equatable, Sendable {
+public struct QuotaWindow: Identifiable, Equatable, Codable, Sendable {
     public let id: String
     public let provider: ProviderID
     public let category: QuotaWindowCategory
@@ -96,7 +96,7 @@ public enum ProviderConnectionStatus: Equatable, Sendable {
 }
 
 /// Normalized quota snapshot returned by a provider adapter.
-public struct ProviderQuotaSnapshot: Equatable, Sendable {
+public struct ProviderQuotaSnapshot: Equatable, Codable, Sendable {
     public let provider: ProviderID
     public let planName: String?
     public let accountLabel: String?

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Tracks the settings and mock-data windows for Dock and app-switcher presence.
+/// Tracks the settings window for Dock and app-switcher presence.
 struct DesktopWindowPresence: NSViewRepresentable {
     static func prepareToOpen() {
         if NSApp.activationPolicy() != .regular {

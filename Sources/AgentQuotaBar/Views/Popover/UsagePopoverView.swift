@@ -7,7 +7,6 @@ struct UsagePopoverView: View {
     @Bindable var store: QuotaStore
     let chartLayout: PopoverChartLayout
     let resetLayout: PopoverResetLayout
-    var isMockMode = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -16,7 +15,7 @@ struct UsagePopoverView: View {
             let summaries = store.usageSummaries()
 
             VStack(alignment: .leading, spacing: DesignTokens.Spacing.md) {
-                headerBar
+                headerBar(now: now)
 
                 if summaries.isEmpty {
                     Text(L10n.string("popover.no_visible_limits"))
@@ -25,13 +24,6 @@ struct UsagePopoverView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                         .padding(.vertical, DesignTokens.Spacing.lg)
                 } else {
-                    if store.settings.preferences(for: .codex).isEnabled,
-                       let announcement = store.codexResetAnnouncement,
-                       announcement.isActive(at: now)
-                    {
-                        codexResetBanner(announcement, now: now)
-                    }
-
                     UsageChartCardView(summaries: summaries, layout: chartLayout, now: now)
 
                     UsageResetView(
@@ -51,8 +43,9 @@ struct UsagePopoverView: View {
 
     // MARK: - Header
 
-    private var headerBar: some View {
+    private func headerBar(now: Date) -> some View {
         HStack(spacing: DesignTokens.Spacing.sm) {
+            resetAnnouncementBadges(now: now)
             Spacer()
             Button {
                 Task { await store.refreshAll() }
@@ -70,11 +63,6 @@ struct UsagePopoverView: View {
             Menu {
                 Text(updatedLabel)
                 Divider()
-                if isMockMode {
-                    Button(L10n.string("mock.menu_item")) {
-                        openDesktopWindow(id: "mock-data")
-                    }
-                }
                 Button(L10n.string("action.settings")) {
                     openDesktopWindow(id: "settings")
                 }
@@ -112,33 +100,56 @@ struct UsagePopoverView: View {
         )
     }
 
-    private func codexResetBanner(_ announcement: CodexResetAnnouncement, now: Date) -> some View {
+    private func resetAnnouncementBadges(now: Date) -> some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
-            Image(systemName: "sparkles")
-                .font(.system(size: DesignTokens.Layout.iconSmallSize))
-                .foregroundStyle(DesignTokens.Colors.textOnBadge)
-            VStack(alignment: .leading, spacing: DesignTokens.Spacing.xxxs) {
-                Text(L10n.string("popover.codex_reset_badge"))
-                    .font(.system(size: DesignTokens.Typography.captionSize, weight: .semibold))
-                    .foregroundStyle(DesignTokens.Colors.textOnBadge)
-                if let targetText = announcement.targetAt.map({ L10n.countdownText(until: $0, now: now) }) ?? announcement.windowLabel {
-                    Text(L10n.format("popover.codex_reset_target", targetText))
-                        .font(.system(size: DesignTokens.Typography.microSize))
-                        .foregroundStyle(DesignTokens.Colors.textSecondary)
-                }
-            }
-            Spacer()
-            if let url = announcement.sourceURL {
-                Link(L10n.string("action.open_link"), destination: url)
-                    .font(.system(size: DesignTokens.Typography.microSize, weight: .medium))
+            if store.settings.preferences(for: .codex).isEnabled,
+               let announcement = store.codexResetAnnouncement,
+               announcement.isActive(at: now)
+            {
+                codexResetBadge(announcement, now: now)
             }
         }
-        .padding(DesignTokens.Spacing.sm)
-        .background(DesignTokens.Colors.badgeBackground)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.md))
+    }
+
+    @ViewBuilder
+    private func codexResetBadge(_ announcement: CodexResetAnnouncement, now: Date) -> some View {
+        let helpText = (announcement.targetAt.map { L10n.countdownText(until: $0, now: now) } ?? announcement.windowLabel)
+            .map { L10n.format("popover.codex_reset_target", $0) }
+            ?? L10n.string("popover.codex_reset_badge")
+
+        if let url = announcement.sourceURL {
+            Link(destination: url) {
+                resetBadge(for: .codex)
+            }
+            .buttonStyle(.plain)
+            .help(helpText)
+        } else {
+            resetBadge(for: .codex)
+                .help(helpText)
+        }
+    }
+
+    private func resetBadge(for provider: ProviderID) -> some View {
+        HStack(spacing: DesignTokens.Spacing.xxs) {
+            ProviderIconView(
+                provider: provider,
+                size: DesignTokens.Layout.iconSmallSize,
+                tintColor: DesignTokens.Colors.provider(provider)
+            )
+            Text(L10n.string("popover.reset_badge"))
+                .font(.system(size: DesignTokens.Typography.microSize, weight: .semibold))
+                .lineLimit(1)
+        }
+        .foregroundStyle(DesignTokens.Colors.provider(provider))
+        .padding(.horizontal, DesignTokens.Spacing.sm)
+        .padding(.vertical, DesignTokens.Spacing.xxs)
+        .background(DesignTokens.Colors.resetBadgeBackground(provider))
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.Radius.pill))
         .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.Radius.md)
-                .stroke(DesignTokens.Colors.badgeBorder, lineWidth: DesignTokens.Stroke.hairline)
+            RoundedRectangle(cornerRadius: DesignTokens.Radius.pill)
+                .stroke(DesignTokens.Colors.resetBadgeBorder(provider), lineWidth: DesignTokens.Stroke.hairline)
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(provider.displayName) \(L10n.string("popover.reset_badge"))")
     }
 }

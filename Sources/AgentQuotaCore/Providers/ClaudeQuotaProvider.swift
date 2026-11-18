@@ -1,7 +1,7 @@
 import Foundation
 import Security
 
-/// Reads Claude Code's existing local credentials (file or macOS Keychain) and queries Anthropic's OAuth usage API.
+/// Reads Claude Code's `statusLine` rate-limit cache when fresh and falls back to Anthropic's OAuth usage API with 429 cooldown.
 public actor ClaudeQuotaProvider: QuotaProvider {
     public nonisolated let providerID: ProviderID = .claude
 
@@ -31,11 +31,17 @@ public actor ClaudeQuotaProvider: QuotaProvider {
     private static let betaHeader = "oauth-2025-04-20"
     private static let keychainService = "Claude Code-credentials"
     private static let cliStatusTTL: TimeInterval = 300
+    static let statusLineFreshnessTTL: TimeInterval = 15 * 60
+    static let baseRateLimitCooldown: TimeInterval = 15 * 60
+    static let maxRateLimitCooldown: TimeInterval = 60 * 60
 
     private let transport: HTTPTransport
     private let subprocess: SubprocessRunning
     private let credentialReader: CredentialReader
     private let environment: [String: String]
+    private let statusLineCacheURL: URL
+    private let cooldownStore: RateLimitCooldownStoring
+    private let nowProvider: @Sendable () -> Date
     private var cachedSourceCredentials: Credentials?
     private var cachedRefreshedCredentials: Credentials?
     private var cachedCLIStatus: (status: CLIAuthStatus, fetchedAt: Date)?
@@ -46,7 +52,10 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         subprocess: SubprocessRunning = SystemSubprocessRunner.shared,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        credentialReader: CredentialReader? = nil
+        credentialReader: CredentialReader? = nil,
+        statusLineCacheURL: URL? = nil,
+        cooldownStore: RateLimitCooldownStoring = UserDefaultsRateLimitCooldownStore(provider: .claude),
+        nowProvider: @escaping @Sendable () -> Date = Date.init
     ) {
         self.transport = transport
         self.subprocess = subprocess
@@ -54,6 +63,14 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         self.credentialReader = credentialReader ?? {
             Self.defaultReadCredentials(homeDirectory: homeDirectory, environment: environment)
         }
+        self.statusLineCacheURL = statusLineCacheURL ?? Self.defaultConfigDirectory(
+            homeDirectory: homeDirectory,
+            environment: environment
+        )
+        .appendingPathComponent("cache", isDirectory: true)
+        .appendingPathComponent("statusline-rate-limits.json")
+        self.cooldownStore = cooldownStore
+        self.nowProvider = nowProvider
     }
 
     public func checkConnectionStatus() async -> ProviderConnectionStatus {
@@ -91,10 +108,29 @@ public actor ClaudeQuotaProvider: QuotaProvider {
     }
 
     private func performFetchUsage() async throws -> ProviderQuotaSnapshot {
-        let cliStatus = await refreshCLIStatusIfNeeded()
+        let now = nowProvider()
+        let cliStatus = await refreshCLIStatusIfNeeded(now: now)
         if let cliStatus, !cliStatus.loggedIn {
             invalidateAuthCaches()
             throw QuotaProviderError.loginRequired
+        }
+
+        let statusLineSnapshot = readStatusLineSnapshot(
+            planName: cliStatus?.resolvedPlanName,
+            accountLabel: cliStatus?.email
+        )
+        if let statusLineSnapshot, isFreshStatusLineSnapshot(statusLineSnapshot, now: now) {
+            return statusLineSnapshot
+        }
+
+        if let cooldown = cooldownStore.load(), cooldown.blockedUntil > now {
+            if let statusLineSnapshot,
+               statusLineSnapshot.fetchedAt > cooldown.recordedAt,
+               hasOnlyActiveWindows(statusLineSnapshot, now: now)
+            {
+                return statusLineSnapshot
+            }
+            throw QuotaProviderError.rateLimited(retryAfter: cooldown.blockedUntil)
         }
 
         var credentials: Credentials
@@ -111,16 +147,24 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         }
 
         if let expiresAt = credentials.expiresAt,
-           expiresAt.timeIntervalSinceNow <= 60,
+           expiresAt.timeIntervalSince(now) <= 60,
            let refreshToken = credentials.refreshToken,
            !refreshToken.isEmpty
         {
             do {
-                credentials = try await refreshOAuthToken(refreshToken: refreshToken)
+                credentials = try await refreshOAuthToken(refreshToken: refreshToken, now: now)
             } catch let error as QuotaProviderError where error == .loginRequired {
                 throw error
+            } catch let error as QuotaProviderError {
+                if case let .rateLimited(retryAfter) = error {
+                    let next = recordRateLimitCooldown(retryAfter: retryAfter, now: now)
+                    throw QuotaProviderError.rateLimited(retryAfter: next.blockedUntil)
+                }
+                if expiresAt.timeIntervalSince(now) <= 0 {
+                    throw error
+                }
             } catch {
-                if expiresAt.timeIntervalSinceNow <= 0 {
+                if expiresAt.timeIntervalSince(now) <= 0 {
                     throw error
                 }
             }
@@ -131,29 +175,60 @@ public actor ClaudeQuotaProvider: QuotaProvider {
            let refreshToken = credentials.refreshToken,
            !refreshToken.isEmpty
         {
-            let refreshed = try await refreshOAuthToken(refreshToken: refreshToken)
-            let retry = try await requestUsage(accessToken: refreshed.accessToken)
-            if retry.statusCode == 401 || retry.statusCode == 403 {
-                invalidateAuthCaches()
+            do {
+                let refreshed = try await refreshOAuthToken(refreshToken: refreshToken, now: now)
+                let retry = try await requestUsage(accessToken: refreshed.accessToken)
+                return try handleUsageResponse(
+                    retry,
+                    planName: cliStatus?.resolvedPlanName,
+                    accountLabel: cliStatus?.email,
+                    now: now
+                )
+            } catch let error as QuotaProviderError {
+                if case let .rateLimited(retryAfter) = error {
+                    let next = recordRateLimitCooldown(retryAfter: retryAfter, now: now)
+                    throw QuotaProviderError.rateLimited(retryAfter: next.blockedUntil)
+                }
+                throw error
             }
-            return try Self.parseUsageResponse(
-                retry,
-                planName: cliStatus?.resolvedPlanName,
-                accountLabel: cliStatus?.email
-            )
         }
 
-        if response.statusCode == 401 || response.statusCode == 403 {
-            invalidateAuthCaches()
-        }
-        return try Self.parseUsageResponse(
+        return try handleUsageResponse(
             response,
             planName: cliStatus?.resolvedPlanName,
-            accountLabel: cliStatus?.email
+            accountLabel: cliStatus?.email,
+            now: now
         )
     }
 
-    // MARK: - Usage Response Parsing (internal for unit testing)
+    private func handleUsageResponse(
+        _ response: HTTPResponseData,
+        planName: String?,
+        accountLabel: String?,
+        now: Date
+    ) throws -> ProviderQuotaSnapshot {
+        if response.statusCode == 401 || response.statusCode == 403 {
+            invalidateAuthCaches()
+        }
+        do {
+            let snapshot = try Self.parseUsageResponse(
+                response,
+                planName: planName,
+                accountLabel: accountLabel,
+                now: now
+            )
+            cooldownStore.save(nil)
+            return snapshot
+        } catch let error as QuotaProviderError {
+            if case let .rateLimited(retryAfter) = error {
+                let next = recordRateLimitCooldown(retryAfter: retryAfter, now: now)
+                throw QuotaProviderError.rateLimited(retryAfter: next.blockedUntil)
+            }
+            throw error
+        }
+    }
+
+    // MARK: - Usage Response & StatusLine Parsing (internal for unit testing)
 
     static func parseUsageResponse(
         _ response: HTTPResponseData,
@@ -203,53 +278,6 @@ public actor ClaudeQuotaProvider: QuotaProvider {
             ))
         }
 
-        var seenModels = Set<String>()
-        if let sonnet = decoded.seven_day_sonnet, let pct = sonnet.utilization {
-            seenModels.insert("sonnet")
-            windows.append(QuotaWindow(
-                id: "claude.7d.sonnet",
-                provider: .claude,
-                category: .modelSpecific,
-                cadence: .sevenDay,
-                modelName: "Sonnet",
-                label: "Sonnet (7d)",
-                usedPercent: pct,
-                resetsAt: DateParsing.parseISO8601(sonnet.resets_at)
-            ))
-        }
-        if let opus = decoded.seven_day_opus, let pct = opus.utilization {
-            seenModels.insert("opus")
-            windows.append(QuotaWindow(
-                id: "claude.7d.opus",
-                provider: .claude,
-                category: .modelSpecific,
-                cadence: .sevenDay,
-                modelName: "Opus",
-                label: "Opus (7d)",
-                usedPercent: pct,
-                resetsAt: DateParsing.parseISO8601(opus.resets_at)
-            ))
-        }
-        for entry in decoded.limits ?? [] where entry.kind == "weekly_scoped" {
-            guard let pct = entry.utilization,
-                  let modelName = entry.scope?.model?.display_name?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !modelName.isEmpty
-            else { continue }
-            let slug = modelName.lowercased().replacingOccurrences(of: " ", with: "-")
-            if seenModels.contains(slug) { continue }
-            seenModels.insert(slug)
-            windows.append(QuotaWindow(
-                id: "claude.7d.\(slug)",
-                provider: .claude,
-                category: .modelSpecific,
-                cadence: .sevenDay,
-                modelName: modelName,
-                label: "\(modelName) (7d)",
-                usedPercent: pct,
-                resetsAt: DateParsing.parseISO8601(entry.resets_at)
-            ))
-        }
-
         return ProviderQuotaSnapshot(
             provider: .claude,
             planName: planName,
@@ -257,6 +285,96 @@ public actor ClaudeQuotaProvider: QuotaProvider {
             windows: windows,
             fetchedAt: now
         )
+    }
+
+    static func parseStatusLineCache(
+        _ data: Data,
+        fallbackDate: Date = Date(),
+        planName: String? = nil,
+        accountLabel: String? = nil
+    ) -> ProviderQuotaSnapshot? {
+        guard let decoded = try? JSONDecoder().decode(WireStatusLineCache.self, from: data) else {
+            return nil
+        }
+
+        var windows: [QuotaWindow] = []
+        if let fiveHour = decoded.five_hour, let pct = fiveHour.used_percentage {
+            windows.append(QuotaWindow(
+                id: "claude.5h",
+                provider: .claude,
+                category: .fiveHour,
+                cadence: .fiveHour,
+                label: "5h Limit",
+                usedPercent: pct,
+                resetsAt: fiveHour.resets_at.map { Date(timeIntervalSince1970: $0) }
+            ))
+        }
+        if let sevenDay = decoded.seven_day, let pct = sevenDay.used_percentage {
+            windows.append(QuotaWindow(
+                id: "claude.7d",
+                provider: .claude,
+                category: .sevenDay,
+                cadence: .sevenDay,
+                label: "7d Limit",
+                usedPercent: pct,
+                resetsAt: sevenDay.resets_at.map { Date(timeIntervalSince1970: $0) }
+            ))
+        }
+        guard !windows.isEmpty else { return nil }
+
+        let fetchedAt = decoded.updated_at.map { Date(timeIntervalSince1970: $0) } ?? fallbackDate
+        return ProviderQuotaSnapshot(
+            provider: .claude,
+            planName: planName,
+            accountLabel: accountLabel,
+            windows: windows,
+            fetchedAt: fetchedAt
+        )
+    }
+
+    private func readStatusLineSnapshot(planName: String?, accountLabel: String?) -> ProviderQuotaSnapshot? {
+        guard let data = try? Data(contentsOf: statusLineCacheURL) else { return nil }
+        let modDate = (try? FileManager.default.attributesOfItem(atPath: statusLineCacheURL.path)[.modificationDate] as? Date) ?? nowProvider()
+        return Self.parseStatusLineCache(
+            data,
+            fallbackDate: modDate,
+            planName: planName,
+            accountLabel: accountLabel
+        )
+    }
+
+    private func isFreshStatusLineSnapshot(_ snapshot: ProviderQuotaSnapshot, now: Date) -> Bool {
+        let age = now.timeIntervalSince(snapshot.fetchedAt)
+        guard age >= -60, age <= Self.statusLineFreshnessTTL else { return false }
+        return hasOnlyActiveWindows(snapshot, now: now)
+    }
+
+    private func hasOnlyActiveWindows(_ snapshot: ProviderQuotaSnapshot, now: Date) -> Bool {
+        !snapshot.windows.isEmpty && snapshot.windows.allSatisfy { window in
+            guard let resetsAt = window.resetsAt else { return true }
+            return resetsAt > now
+        }
+    }
+
+    private func recordRateLimitCooldown(retryAfter: Date?, now: Date) -> RateLimitCooldownState {
+        let previous = cooldownStore.load()
+        let nextFailures = (previous?.consecutiveFailures ?? 0) + 1
+        let exponent = max(0, min(nextFailures - 1, 2))
+        let backoffSeconds = min(Self.maxRateLimitCooldown, Self.baseRateLimitCooldown * pow(2.0, Double(exponent)))
+        let backoffUntil = now.addingTimeInterval(backoffSeconds)
+        let blockedUntil: Date
+        if let retryAfter, retryAfter > now.addingTimeInterval(60) {
+            blockedUntil = max(retryAfter, backoffUntil)
+        } else {
+            blockedUntil = backoffUntil
+        }
+        let state = RateLimitCooldownState(
+            blockedUntil: blockedUntil,
+            consecutiveFailures: nextFailures,
+            recordedAt: now
+        )
+        cooldownStore.save(state)
+        return state
     }
 
     // MARK: - Credentials & Network
@@ -293,10 +411,14 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         cachedCLIStatus = nil
     }
 
-    static func defaultReadCredentials(homeDirectory: URL, environment: [String: String]) -> CredentialReadResult {
-        let configDir = environment["CLAUDE_CONFIG_DIR"]
+    static func defaultConfigDirectory(homeDirectory: URL, environment: [String: String]) -> URL {
+        environment["CLAUDE_CONFIG_DIR"]
             .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
             ?? homeDirectory.appendingPathComponent(".claude", isDirectory: true)
+    }
+
+    static func defaultReadCredentials(homeDirectory: URL, environment: [String: String]) -> CredentialReadResult {
+        let configDir = defaultConfigDirectory(homeDirectory: homeDirectory, environment: environment)
         let fileURL = configDir.appendingPathComponent(".credentials.json")
         if let data = try? Data(contentsOf: fileURL),
            let creds = parseCredentialPayload(data)
@@ -358,7 +480,7 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         return try await transport.perform(request)
     }
 
-    private func refreshOAuthToken(refreshToken: String) async throws -> Credentials {
+    private func refreshOAuthToken(refreshToken: String, now: Date) async throws -> Credentials {
         var request = URLRequest(url: Self.tokenRefreshURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -376,7 +498,7 @@ public actor ClaudeQuotaProvider: QuotaProvider {
             invalidateAuthCaches()
             throw QuotaProviderError.loginRequired
         case 429:
-            throw QuotaProviderError.rateLimited(retryAfter: response.retryAfterDate())
+            throw QuotaProviderError.rateLimited(retryAfter: response.retryAfterDate(now: now))
         default:
             throw QuotaProviderError.httpError(response.statusCode)
         }
@@ -388,16 +510,16 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         }
         let nextRefresh = (json["refresh_token"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? refreshToken
         let expiresIn = json["expires_in"] as? Double
-        let expiresAt = expiresIn.map { Date().addingTimeInterval($0) } ?? DateParsing.jwtExpiry(from: accessToken)
+        let expiresAt = expiresIn.map { now.addingTimeInterval($0) } ?? DateParsing.jwtExpiry(from: accessToken)
         let refreshed = Credentials(accessToken: accessToken, refreshToken: nextRefresh, expiresAt: expiresAt)
         cachedRefreshedCredentials = refreshed
         return refreshed
     }
 
-    private func refreshCLIStatusIfNeeded() async -> CLIAuthStatus? {
+    private func refreshCLIStatusIfNeeded(now: Date) async -> CLIAuthStatus? {
         if let cached = cachedCLIStatus,
            cached.status.loggedIn,
-           Date().timeIntervalSince(cached.fetchedAt) < Self.cliStatusTTL
+           now.timeIntervalSince(cached.fetchedAt) < Self.cliStatusTTL
         {
             return cached.status
         }
@@ -406,7 +528,7 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         }
         let status = await fetchCLIAuthStatus(binary: binary)
         if let status, status.loggedIn {
-            cachedCLIStatus = (status, Date())
+            cachedCLIStatus = (status, now)
         } else {
             cachedCLIStatus = nil
         }
@@ -444,9 +566,6 @@ public actor ClaudeQuotaProvider: QuotaProvider {
     private struct WireUsageResponse: Decodable {
         let five_hour: WireBucket?
         let seven_day: WireBucket?
-        let seven_day_sonnet: WireBucket?
-        let seven_day_opus: WireBucket?
-        let limits: [WireScopedLimit]?
     }
 
     private struct WireBucket: Decodable {
@@ -454,18 +573,14 @@ public actor ClaudeQuotaProvider: QuotaProvider {
         let resets_at: String?
     }
 
-    private struct WireScopedLimit: Decodable {
-        let kind: String?
-        let utilization: Double?
-        let resets_at: String?
-        let scope: WireScope?
+    private struct WireStatusLineCache: Decodable {
+        let updated_at: Double?
+        let five_hour: WireStatusLineBucket?
+        let seven_day: WireStatusLineBucket?
     }
 
-    private struct WireScope: Decodable {
-        let model: WireModelScope?
-    }
-
-    private struct WireModelScope: Decodable {
-        let display_name: String?
+    private struct WireStatusLineBucket: Decodable {
+        let used_percentage: Double?
+        let resets_at: Double?
     }
 }

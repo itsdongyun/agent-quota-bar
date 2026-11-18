@@ -30,9 +30,15 @@ enum DesignTokens {
         // Surface & border colors
         static let cardBackground = Color.primary.opacity(0.05)
         static let borderSubtle = Color.primary.opacity(0.10)
-        static let badgeBackground = Color.accentColor.opacity(0.14)
-        static let badgeBorder = Color.accentColor.opacity(0.32)
         static let shadowColor = Color.black.opacity(0.12)
+
+        static func resetBadgeBackground(_ id: ProviderID) -> Color {
+            provider(id).opacity(0.14)
+        }
+
+        static func resetBadgeBorder(_ id: ProviderID) -> Color {
+            provider(id).opacity(0.35)
+        }
 
         // Pace chart
         static let chartGridLine = Color.primary.opacity(0.08)
@@ -45,7 +51,6 @@ enum DesignTokens {
         // Text hierarchy
         static let textPrimary = Color.primary
         static let textSecondary = Color.secondary
-        static let textOnBadge = Color.accentColor
 
         private static func dynamic(light: NSColor, dark: NSColor) -> Color {
             Color(nsColor: NSColor(name: nil) { appearance in
@@ -87,13 +92,13 @@ enum DesignTokens {
     }
 
     enum Layout {
-        static let popoverWidth: CGFloat = 380
+        static let popoverWidth: CGFloat = 440
         static let settingsWidth: CGFloat = 460
         static let settingsMinHeight: CGFloat = 420
 
         static let headerButtonSize: CGFloat = 26
 
-        static let chartAspectRatio: CGFloat = 3.0 / 2.0
+        static let chartAspectRatio: CGFloat = 16.0 / 9.0
         static let chartGridDivisions: Int = 4
         static let chartLabelHeight: CGFloat = 12
         static let chartLabelGap: CGFloat = 3
@@ -104,11 +109,6 @@ enum DesignTokens {
         static let resetProviderIconSize: CGFloat = 14
         static let resetMarkerSize: CGFloat = 8
         static let resetListTimeWidth: CGFloat = 60
-
-        static let mockControlWidth: CGFloat = 440
-        static let mockControlMinHeight: CGFloat = 560
-        static let mockPresetColumns: Int = 4
-        static let mockValueLabelWidth: CGFloat = 44
 
         static let menuBarRingSize: CGFloat = 13
         static let menuBarRingSpacing: CGFloat = 4

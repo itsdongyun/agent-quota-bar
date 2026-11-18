@@ -167,10 +167,12 @@ struct SettingsView: View {
                         get: { prefs.showSevenDay },
                         set: { value in store.updatePreferences({ $0.showSevenDay = value }, for: provider) }
                     ))
-                    Toggle(L10n.string("settings.limit.model_specific"), isOn: Binding(
-                        get: { prefs.showModelSpecific },
-                        set: { value in store.updatePreferences({ $0.showModelSpecific = value }, for: provider) }
-                    ))
+                    if provider != .claude {
+                        Toggle(L10n.string("settings.limit.model_specific"), isOn: Binding(
+                            get: { prefs.showModelSpecific },
+                            set: { value in store.updatePreferences({ $0.showModelSpecific = value }, for: provider) }
+                        ))
+                    }
                 }
                 .font(.system(size: DesignTokens.Typography.captionSize))
 

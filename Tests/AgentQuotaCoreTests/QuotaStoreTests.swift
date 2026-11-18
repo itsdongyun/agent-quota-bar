@@ -47,7 +47,8 @@ final class QuotaStoreTests: XCTestCase {
             announcementService: CodexResetAnnouncementService(
                 transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
             ),
-            settingsStore: InMemorySettingsStore()
+            settingsStore: InMemorySettingsStore(),
+            snapshotStore: InMemorySnapshotStore()
         )
 
         await store.refreshAll()
@@ -72,7 +73,8 @@ final class QuotaStoreTests: XCTestCase {
             announcementService: CodexResetAnnouncementService(
                 transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
             ),
-            settingsStore: InMemorySettingsStore()
+            settingsStore: InMemorySettingsStore(),
+            snapshotStore: InMemorySnapshotStore()
         )
 
         await store.refreshAll()
@@ -103,7 +105,8 @@ final class QuotaStoreTests: XCTestCase {
             announcementService: CodexResetAnnouncementService(
                 transport: MockHTTPTransport(response: HTTPResponseData(data: Data(watchJSON.utf8), statusCode: 200))
             ),
-            settingsStore: InMemorySettingsStore()
+            settingsStore: InMemorySettingsStore(),
+            snapshotStore: InMemorySnapshotStore()
         )
 
         await store.refreshAll()
@@ -115,5 +118,53 @@ final class QuotaStoreTests: XCTestCase {
         store.setProviderEnabled(true, for: .codex)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(store.connectionStatuses[.codex], .connected)
+    }
+
+    func testSnapshotPersistenceLoadsOnInitAndRetainsLastDataOn429() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let fileURL = tempDir.appendingPathComponent("snapshots.json")
+
+        let reset = Date().addingTimeInterval(3600)
+        let savedWindow = QuotaWindow(
+            id: "claude.5h",
+            provider: .claude,
+            category: .fiveHour,
+            cadence: .fiveHour,
+            label: "5h Limit",
+            usedPercent: 44,
+            resetsAt: reset
+        )
+        let initialSnapshot = ProviderQuotaSnapshot(
+            provider: .claude,
+            planName: "Max",
+            windows: [savedWindow],
+            fetchedAt: Date(timeIntervalSince1970: 1_794_900_000)
+        )
+
+        let writerStore = FileQuotaSnapshotStore(fileURL: fileURL)
+        writerStore.save([.claude: initialSnapshot])
+
+        let rateLimitedClaude = StubQuotaProvider(providerID: .claude) {
+            throw QuotaProviderError.rateLimited(retryAfter: Date().addingTimeInterval(900))
+        }
+        let store = QuotaStore(
+            providers: [rateLimitedClaude],
+            announcementService: CodexResetAnnouncementService(
+                transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
+            ),
+            settingsStore: InMemorySettingsStore(),
+            snapshotStore: FileQuotaSnapshotStore(fileURL: fileURL)
+        )
+
+        XCTAssertEqual(store.snapshots[.claude]?.windows.first?.usedPercent, 44)
+        XCTAssertEqual(store.lastUpdatedAt, initialSnapshot.fetchedAt)
+
+        await store.refreshAll()
+
+        XCTAssertEqual(store.snapshots[.claude]?.windows.first?.usedPercent, 44)
+        if case .rateLimited = store.connectionStatuses[.claude] {} else {
+            XCTFail("Expected rateLimited status, got \(String(describing: store.connectionStatuses[.claude]))")
+        }
     }
 }

@@ -17,6 +17,8 @@
     <string>com.agentquotabar.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleDisplayName</key>
+    <string>Agent Quota Bar</string>
     <key>CFBundleName</key>
     <string>Agent Quota Bar</string>
     <key>CFBundlePackageType</key>

@@ -26,13 +26,15 @@ public final class QuotaStore {
     private let providers: [ProviderID: any QuotaProvider]
     private let announcementService: CodexResetAnnouncementService
     private let settingsStore: QuotaSettingsStoring
+    private let snapshotStore: QuotaSnapshotStoring
     private var refreshTimerTask: Task<Void, Never>?
     private var inFlightProviderTasks: [ProviderID: Task<Bool, Never>] = [:]
 
     public init(
         providers: [any QuotaProvider]? = nil,
         announcementService: CodexResetAnnouncementService = CodexResetAnnouncementService(),
-        settingsStore: QuotaSettingsStoring = UserDefaultsQuotaSettingsStore()
+        settingsStore: QuotaSettingsStoring = UserDefaultsQuotaSettingsStore(),
+        snapshotStore: QuotaSnapshotStoring = FileQuotaSnapshotStore()
     ) {
         let resolvedProviders = providers ?? [
             ClaudeQuotaProvider(),
@@ -42,7 +44,11 @@ public final class QuotaStore {
         self.providers = Dictionary(uniqueKeysWithValues: resolvedProviders.map { ($0.providerID, $0) })
         self.announcementService = announcementService
         self.settingsStore = settingsStore
+        self.snapshotStore = snapshotStore
         self.settings = settingsStore.load()
+        let cachedSnapshots = snapshotStore.load()
+        self.snapshots = cachedSnapshots
+        self.lastUpdatedAt = cachedSnapshots.values.map(\.fetchedAt).max()
     }
 
     public func start() {
@@ -100,32 +106,6 @@ public final class QuotaStore {
         if enabledProviders.isEmpty || anySucceeded {
             lastUpdatedAt = Date()
         }
-    }
-
-    /// Refreshes only `providerIDs` (enabled ones) and optionally the Codex announcement,
-    /// without waiting for or blocking a full refresh cycle.
-    public func refresh(_ providerIDs: [ProviderID], includeAnnouncement: Bool) async {
-        let targets = providerIDs.filter { settings.preferences(for: $0).isEnabled }
-        await withTaskGroup(of: Void.self) { group in
-            for providerID in targets {
-                group.addTask { [weak self] in
-                    _ = await self?.refreshProvider(providerID)
-                }
-            }
-            if includeAnnouncement, settings.preferences(for: .codex).isEnabled {
-                group.addTask { [weak self] in
-                    await self?.refreshCodexAnnouncement()
-                }
-            }
-        }
-        lastUpdatedAt = Date()
-    }
-
-    /// Drops all fetched data and statuses, as on a fresh launch.
-    public func clearSnapshots() {
-        snapshots = [:]
-        connectionStatuses = Dictionary(uniqueKeysWithValues: ProviderID.allCases.map { ($0, .unknown) })
-        codexResetAnnouncement = nil
     }
 
     /// Refreshes connection statuses concurrently. When `forceVerify` is false (e.g. opening Settings),
@@ -226,6 +206,7 @@ public final class QuotaStore {
             do {
                 let snapshot = try await provider.fetchUsage()
                 self.snapshots[providerID] = snapshot
+                self.snapshotStore.save(self.snapshots)
                 self.connectionStatuses[providerID] = .connected
                 return true
             } catch let error as QuotaProviderError {

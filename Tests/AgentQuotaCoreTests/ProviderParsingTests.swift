@@ -2,24 +2,19 @@ import XCTest
 @testable import AgentQuotaCore
 
 final class ProviderParsingTests: XCTestCase {
-    func testClaudeParsesWindowsAndScopedLimits() throws {
+    func testClaudeParsesFiveHourAndSevenDayWindowsOnly() throws {
         let json = """
         {
           "five_hour": { "utilization": 18.0, "resets_at": "2026-11-17T06:00:00Z" },
           "seven_day": { "utilization": 42.0, "resets_at": "2026-11-21T00:00:00Z" },
           "seven_day_sonnet": { "utilization": 25.0, "resets_at": "2026-11-21T00:00:00Z" },
+          "seven_day_opus": { "utilization": 30.0, "resets_at": "2026-11-21T00:00:00Z" },
           "limits": [
             {
               "kind": "weekly_scoped",
               "utilization": 60.0,
               "resets_at": "2026-11-21T00:00:00Z",
               "scope": { "model": { "display_name": "Sonnet" } }
-            },
-            {
-              "kind": "weekly_scoped",
-              "utilization": 70.0,
-              "resets_at": "2026-11-21T00:00:00Z",
-              "scope": { "model": { "display_name": "Fable" } }
             }
           ]
         }
@@ -29,9 +24,9 @@ final class ProviderParsingTests: XCTestCase {
 
         XCTAssertEqual(snapshot.provider, .claude)
         XCTAssertEqual(snapshot.planName, "Pro")
-        XCTAssertEqual(snapshot.windows.map(\.id), ["claude.5h", "claude.7d", "claude.7d.sonnet", "claude.7d.fable"])
+        XCTAssertEqual(snapshot.windows.map(\.id), ["claude.5h", "claude.7d"])
         XCTAssertEqual(snapshot.windows[0].usedPercent, 18.0)
-        XCTAssertEqual(snapshot.windows[3].modelName, "Fable")
+        XCTAssertEqual(snapshot.windows[1].usedPercent, 42.0)
     }
 
     func testClaudeCredentialPayloadAndRateLimitError() {
@@ -267,6 +262,7 @@ final class ProviderParsingTests: XCTestCase {
             resolvedPaths: ["claude": "/usr/local/bin/claude"],
             handler: { _, _ in SubprocessOutput(exitCode: 0, stdout: Data(cliOK.utf8), stderr: Data()) }
         )
+        let missingStatusLine = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).json")
         let initialExpiry = Date().addingTimeInterval(10)
         let provider = ClaudeQuotaProvider(
             transport: transport,
@@ -277,7 +273,9 @@ final class ProviderParsingTests: XCTestCase {
                     refreshToken: "rt-initial",
                     expiresAt: initialExpiry
                 ))
-            }
+            },
+            statusLineCacheURL: missingStatusLine,
+            cooldownStore: InMemoryRateLimitCooldownStore()
         )
 
         // First fetch rotates refresh token to rt-rotated-1 with expires_in = 15s (< 30s).
@@ -312,6 +310,7 @@ final class ProviderParsingTests: XCTestCase {
                 return HTTPResponseData(data: Data(), statusCode: 401)
             },
         ])
+        let missingStatusLine = FileManager.default.temporaryDirectory.appendingPathComponent("missing-\(UUID().uuidString).json")
         let provider = ClaudeQuotaProvider(
             transport: transport,
             subprocess: subprocess,
@@ -321,7 +320,9 @@ final class ProviderParsingTests: XCTestCase {
                     refreshToken: "rt-1",
                     expiresAt: Date().addingTimeInterval(-10)
                 ))
-            }
+            },
+            statusLineCacheURL: missingStatusLine,
+            cooldownStore: InMemoryRateLimitCooldownStore()
         )
 
         do {
@@ -342,6 +343,112 @@ final class ProviderParsingTests: XCTestCase {
             }
             XCTAssertNotNil(retryAfter)
         }
+    }
+
+    func testClaudeUsesFreshStatusLineCacheWithoutHTTPCall() async throws {
+        let now = Date(timeIntervalSince1970: 1_795_000_000)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let statusLineURL = tempDir.appendingPathComponent("statusline-rate-limits.json")
+        let cacheJSON = """
+        {
+          "updated_at": \(now.timeIntervalSince1970 - 60),
+          "five_hour": { "used_percentage": 64, "resets_at": \(now.timeIntervalSince1970 + 3600) },
+          "seven_day": { "used_percentage": 22, "resets_at": \(now.timeIntervalSince1970 + 86400) }
+        }
+        """
+        try Data(cacheJSON.utf8).write(to: statusLineURL)
+
+        let transport = MockHTTPTransport(handlers: [
+            { _ in
+                XCTFail("Should not hit OAuth HTTP endpoint when statusLine cache is fresh")
+                return HTTPResponseData(data: Data(), statusCode: 500)
+            },
+        ])
+        let cliOK = #"{"loggedIn":true,"email":"a@b.com","subscriptionType":"max"}"#
+        let subprocess = MockSubprocessRunner(
+            resolvedPaths: ["claude": "/usr/local/bin/claude"],
+            handler: { _, _ in SubprocessOutput(exitCode: 0, stdout: Data(cliOK.utf8), stderr: Data()) }
+        )
+        let provider = ClaudeQuotaProvider(
+            transport: transport,
+            subprocess: subprocess,
+            credentialReader: { .notFound },
+            statusLineCacheURL: statusLineURL,
+            cooldownStore: InMemoryRateLimitCooldownStore(),
+            nowProvider: { now }
+        )
+
+        let snapshot = try await provider.fetchUsage()
+        XCTAssertEqual(snapshot.planName, "Max")
+        XCTAssertEqual(snapshot.windows.map(\.id), ["claude.5h", "claude.7d"])
+        XCTAssertEqual(snapshot.windows[0].usedPercent, 64)
+        XCTAssertEqual(snapshot.windows[1].usedPercent, 22)
+        XCTAssertEqual(transport.recordedRequests.count, 0)
+    }
+
+    func testClaudeFallsBackToHTTPWhenStatusLineStaleAndEnforces429Cooldown() async throws {
+        let now = Date(timeIntervalSince1970: 1_795_000_000)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let statusLineURL = tempDir.appendingPathComponent("statusline-rate-limits.json")
+        let staleJSON = """
+        {
+          "updated_at": \(now.timeIntervalSince1970 - 3600),
+          "five_hour": { "used_percentage": 10, "resets_at": \(now.timeIntervalSince1970 + 3600) }
+        }
+        """
+        try Data(staleJSON.utf8).write(to: statusLineURL)
+
+        let transport = MockHTTPTransport(handlers: [
+            { _ in HTTPResponseData(data: Data(), statusCode: 429) },
+        ])
+        let cliOK = #"{"loggedIn":true,"email":"a@b.com","subscriptionType":"pro"}"#
+        let subprocess = MockSubprocessRunner(
+            resolvedPaths: ["claude": "/usr/local/bin/claude"],
+            handler: { _, _ in SubprocessOutput(exitCode: 0, stdout: Data(cliOK.utf8), stderr: Data()) }
+        )
+        let cooldownStore = InMemoryRateLimitCooldownStore()
+        let provider = ClaudeQuotaProvider(
+            transport: transport,
+            subprocess: subprocess,
+            credentialReader: {
+                .found(ClaudeQuotaProvider.Credentials(
+                    accessToken: "at-valid",
+                    refreshToken: nil,
+                    expiresAt: now.addingTimeInterval(3600)
+                ))
+            },
+            statusLineCacheURL: statusLineURL,
+            cooldownStore: cooldownStore,
+            nowProvider: { now }
+        )
+
+        do {
+            _ = try await provider.fetchUsage()
+            XCTFail("Expected rateLimited")
+        } catch let error as QuotaProviderError {
+            guard case let .rateLimited(retryAfter) = error else {
+                return XCTFail("Expected rateLimited, got \(error)")
+            }
+            XCTAssertNotNil(retryAfter)
+        }
+        XCTAssertEqual(transport.recordedRequests.count, 1)
+
+        // Second attempt while in cooldown must NOT send another HTTP request.
+        do {
+            _ = try await provider.fetchUsage()
+            XCTFail("Expected rateLimited during cooldown")
+        } catch let error as QuotaProviderError {
+            guard case .rateLimited = error else {
+                return XCTFail("Expected rateLimited, got \(error)")
+            }
+        }
+        XCTAssertEqual(transport.recordedRequests.count, 1)
     }
 
     func testCodexExternalCredentialChangeInvalidatesCacheAndHandlesMalformedAnd24hWindows() async throws {

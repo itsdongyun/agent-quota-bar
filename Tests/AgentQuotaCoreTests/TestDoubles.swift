@@ -65,3 +65,20 @@ final class InMemorySettingsStore: QuotaSettingsStoring, @unchecked Sendable {
     func load() -> QuotaSettings { stored }
     func save(_ settings: QuotaSettings) { stored = settings }
 }
+
+final class InMemorySnapshotStore: QuotaSnapshotStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    var stored: [ProviderID: ProviderQuotaSnapshot]
+
+    init(stored: [ProviderID: ProviderQuotaSnapshot] = [:]) {
+        self.stored = stored
+    }
+
+    func load() -> [ProviderID: ProviderQuotaSnapshot] {
+        lock.withLock { stored }
+    }
+
+    func save(_ snapshots: [ProviderID: ProviderQuotaSnapshot]) {
+        lock.withLock { stored = snapshots }
+    }
+}
