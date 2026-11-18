@@ -9,7 +9,7 @@
 "popover.updated_at" = "Updated %@";
 "popover.never_updated" = "Not updated yet";
 "action.more" = "More";
-"popover.slot_short" = "5h · Daily";
+"popover.slot_short" = "5h";
 "popover.slot_weekly" = "Weekly";
 "popover.limit.five_hour" = "5-Hour Limit";
 "popover.limit.daily" = "Daily Limit";
