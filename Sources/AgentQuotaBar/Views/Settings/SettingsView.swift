@@ -122,12 +122,6 @@ struct SettingsView: View {
                 .disabled(!launchAtLogin.isSupportedInCurrentEnvironment)
             } header: {
                 Text(L10n.string("settings.section.behavior"))
-            } footer: {
-                if !launchAtLogin.isSupportedInCurrentEnvironment {
-                    Text(L10n.string("settings.launch_at_login_hint"))
-                        .font(.system(size: DesignTokens.Typography.microSize))
-                        .foregroundStyle(DesignTokens.Colors.textSecondary)
-                }
             }
         }
         .formStyle(.grouped)
@@ -146,13 +140,9 @@ struct SettingsView: View {
                 } label: {
                     Label(L10n.string("settings.chart_layout"), systemImage: "chart.xyaxis.line")
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
             } header: {
                 Text(L10n.string("settings.section.charts"))
-            } footer: {
-                Text(chartLayoutHint)
-                    .font(.system(size: DesignTokens.Typography.microSize))
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
 
             Section {
@@ -163,35 +153,13 @@ struct SettingsView: View {
                 } label: {
                     Label(L10n.string("settings.reset_layout"), systemImage: "rectangle.3.group")
                 }
-                .pickerStyle(.segmented)
+                .pickerStyle(.menu)
             } header: {
                 Text(L10n.string("settings.section.resets"))
-            } footer: {
-                Text(resetLayoutHint)
-                    .font(.system(size: DesignTokens.Typography.microSize))
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
         }
         .formStyle(.grouped)
         .font(.system(size: DesignTokens.Typography.bodySize))
-    }
-
-    private var chartLayoutHint: String {
-        switch chartLayout {
-        case .byProvider:
-            return L10n.string("settings.chart_layout.by_provider.hint")
-        case .byWindow:
-            return L10n.string("settings.chart_layout.by_window.hint")
-        }
-    }
-
-    private var resetLayoutHint: String {
-        switch resetLayout {
-        case .providerColumns:
-            return L10n.string("settings.reset_layout.providerColumns.hint")
-        case .periodLists:
-            return L10n.string("settings.reset_layout.periodLists.hint")
-        }
     }
 
     // MARK: - Providers Tab
@@ -302,10 +270,6 @@ struct SettingsView: View {
                 }
             } header: {
                 Text(L10n.string("settings.section.provider_connection"))
-            } footer: {
-                cliHintText(for: provider)
-                    .font(.system(size: DesignTokens.Typography.microSize))
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
             }
 
             if prefs.isEnabled {
@@ -403,13 +367,4 @@ struct SettingsView: View {
                 .font(.system(size: DesignTokens.Typography.captionSize, weight: .medium))
         }
         .foregroundStyle(color)
-    }
-
-    private func cliHintText(for provider: ProviderID) -> Text {
-        switch provider {
-        case .claude: return L10n.markdownText("settings.cli_hint.claude")
-        case .codex: return L10n.markdownText("settings.cli_hint.codex")
-        case .antigravity: return L10n.markdownText("settings.cli_hint.antigravity")
-        }
-    }
-}
+    }}

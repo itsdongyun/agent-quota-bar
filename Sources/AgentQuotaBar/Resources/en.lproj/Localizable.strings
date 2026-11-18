@@ -80,17 +80,12 @@
 "settings.chart_layout" = "Chart Layout";
 "settings.chart_layout.by_provider" = "By provider";
 "settings.chart_layout.by_window" = "By limit period";
-"settings.chart_layout.by_provider.hint" = "Shows a dedicated pace chart side by side for each provider.";
-"settings.chart_layout.by_window.hint" = "Groups all providers together into 5-hour and weekly charts.";
 "settings.reset_layout" = "Reset Layout";
 "settings.reset_layout.providerColumns" = "Provider columns";
 "settings.reset_layout.periodLists" = "Period lists";
-"settings.reset_layout.providerColumns.hint" = "Stacks 5-hour and weekly reset times inside each provider card.";
-"settings.reset_layout.periodLists.hint" = "Aligns providers across 5-hour and weekly reset columns.";
 "settings.refresh_interval" = "Refresh Interval";
 "settings.interval_minutes" = "Every %d min";
 "settings.launch_at_login" = "Launch at Login";
-"settings.launch_at_login_hint" = "Requires running from an .app bundle.";
 "settings.section.providers" = "Providers & Tracked Limits";
 "settings.section.provider_connection" = "Connection";
 "settings.section.provider_limits" = "Tracked Limits";
@@ -101,6 +96,3 @@
 "settings.limit.seven_day" = "7-Day Limit";
 "settings.limit.model_specific" = "Model-Specific Limits";
 "settings.limit.models_discovered" = "Individual Models";
-"settings.cli_hint.claude" = "Uses Claude Code `statusLine` cache & local credentials.";
-"settings.cli_hint.codex" = "Reads local `~/.codex/auth.json`.";
-"settings.cli_hint.antigravity" = "Queries local `agy -p \"/usage\"` (0 tokens).";

@@ -13,17 +13,6 @@ enum L10n {
         return String(format: template, locale: Locale.current, arguments: args)
     }
 
-    static func markdownText(_ key: String) -> Text {
-        let raw = string(key)
-        if let attributed = try? AttributedString(
-            markdown: raw,
-            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        ) {
-            return Text(attributed)
-        }
-        return Text(raw)
-    }
-
     static func statusText(_ status: ProviderConnectionStatus, now: Date = Date()) -> String {
         switch status {
         case .unknown:
