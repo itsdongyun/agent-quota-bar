@@ -102,41 +102,78 @@ struct UsagePopoverView: View {
 
     private func resetAnnouncementBadges(now: Date) -> some View {
         HStack(spacing: DesignTokens.Spacing.xs) {
-            if store.settings.preferences(for: .codex).isEnabled,
-               let announcement = store.codexResetAnnouncement,
-               announcement.isActive(at: now)
-            {
-                codexResetBadge(announcement, now: now)
+            ForEach(ProviderID.allCases) { provider in
+                if store.settings.preferences(for: provider).isEnabled,
+                   let announcement = store.resetAnnouncements[provider],
+                   announcement.isActive(at: now)
+                {
+                    resetAnnouncementBadge(announcement, now: now)
+                }
             }
         }
     }
 
     @ViewBuilder
-    private func codexResetBadge(_ announcement: CodexResetAnnouncement, now: Date) -> some View {
-        let helpText = (announcement.targetAt.map { L10n.countdownText(until: $0, now: now) } ?? announcement.windowLabel)
-            .map { L10n.format("popover.codex_reset_target", $0) }
-            ?? L10n.string("popover.codex_reset_badge")
+    private func resetAnnouncementBadge(_ announcement: ResetAnnouncement, now: Date) -> some View {
+        let title = badgeTitle(for: announcement.kind)
+        let helpText = badgeHelpText(for: announcement, now: now)
 
         if let url = announcement.sourceURL {
             Link(destination: url) {
-                resetBadge(for: .codex)
+                resetBadge(for: announcement.provider, title: title)
             }
             .buttonStyle(.plain)
             .help(helpText)
         } else {
-            resetBadge(for: .codex)
+            resetBadge(for: announcement.provider, title: title)
                 .help(helpText)
         }
     }
 
-    private func resetBadge(for provider: ProviderID) -> some View {
+    private func badgeTitle(for kind: ResetAnnouncement.Kind) -> String {
+        switch kind {
+        case .watch:
+            return L10n.string("popover.reset_badge")
+        case .bankedReset:
+            return L10n.string("popover.banked_reset_badge")
+        case .recentReset:
+            return L10n.string("popover.recent_reset_badge")
+        }
+    }
+
+    private func badgeHelpText(for announcement: ResetAnnouncement, now: Date) -> String {
+        let providerName = announcement.provider.displayName
+        switch announcement.kind {
+        case .watch:
+            return (announcement.targetAt.map { L10n.countdownText(until: $0, now: now) } ?? announcement.windowLabel)
+                .map { L10n.format("popover.reset_target", $0) }
+                ?? L10n.format("popover.reset_watch_fallback", providerName)
+        case .bankedReset:
+            if let expiresAt = announcement.expiresAt {
+                return L10n.format(
+                    "popover.banked_reset_expires",
+                    providerName,
+                    L10n.resetClockText(until: expiresAt, now: now)
+                )
+            }
+            return L10n.format("popover.banked_reset_fallback", providerName)
+        case .recentReset:
+            if let announcedAt = announcement.announcedAt {
+                let formattedTime = announcedAt.formatted(date: .abbreviated, time: .shortened)
+                return L10n.format("popover.recent_reset_at", providerName, formattedTime)
+            }
+            return L10n.format("popover.recent_reset_fallback", providerName)
+        }
+    }
+
+    private func resetBadge(for provider: ProviderID, title: String) -> some View {
         HStack(spacing: DesignTokens.Spacing.xxs) {
             ProviderIconView(
                 provider: provider,
                 size: DesignTokens.Layout.iconSmallSize,
                 tintColor: DesignTokens.Colors.provider(provider)
             )
-            Text(L10n.string("popover.reset_badge"))
+            Text(title)
                 .font(.system(size: DesignTokens.Typography.microSize, weight: .semibold))
                 .lineLimit(1)
         }
@@ -150,6 +187,6 @@ struct UsagePopoverView: View {
                 .stroke(DesignTokens.Colors.resetBadgeBorder(provider), lineWidth: DesignTokens.Stroke.hairline)
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(provider.displayName) \(L10n.string("popover.reset_badge"))")
+        .accessibilityLabel("\(provider.displayName) \(title)")
     }
 }

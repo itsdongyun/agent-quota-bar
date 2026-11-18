@@ -9,7 +9,7 @@ public final class QuotaStore {
     public private(set) var connectionStatuses: [ProviderID: ProviderConnectionStatus] = Dictionary(
         uniqueKeysWithValues: ProviderID.allCases.map { ($0, .unknown) }
     )
-    public private(set) var codexResetAnnouncement: CodexResetAnnouncement?
+    public private(set) var resetAnnouncements: [ProviderID: ResetAnnouncement] = [:]
     public private(set) var isRefreshing = false
     public private(set) var refreshingProviders: Set<ProviderID> = []
     public private(set) var lastUpdatedAt: Date?
@@ -24,7 +24,7 @@ public final class QuotaStore {
     }
 
     private let providers: [ProviderID: any QuotaProvider]
-    private let announcementService: CodexResetAnnouncementService
+    private let announcementService: ResetAnnouncementService
     private let settingsStore: QuotaSettingsStoring
     private let snapshotStore: QuotaSnapshotStoring
     private var refreshTimerTask: Task<Void, Never>?
@@ -32,7 +32,7 @@ public final class QuotaStore {
 
     public init(
         providers: [any QuotaProvider]? = nil,
-        announcementService: CodexResetAnnouncementService = CodexResetAnnouncementService(),
+        announcementService: ResetAnnouncementService = ResetAnnouncementService(),
         settingsStore: QuotaSettingsStoring = UserDefaultsQuotaSettingsStore(),
         snapshotStore: QuotaSnapshotStoring = FileQuotaSnapshotStore()
     ) {
@@ -73,8 +73,8 @@ public final class QuotaStore {
         let disabledProviders = ProviderID.allCases.filter { !settings.preferences(for: $0).isEnabled }
         refreshingProviders.formUnion(enabledProviders)
 
-        if !settings.preferences(for: .codex).isEnabled {
-            codexResetAnnouncement = nil
+        for providerID in disabledProviders {
+            resetAnnouncements.removeValue(forKey: providerID)
         }
 
         let anySucceeded = await withTaskGroup(of: Bool.self) { group in
@@ -82,16 +82,14 @@ public final class QuotaStore {
                 group.addTask { [weak self] in
                     await self?.refreshProvider(providerID) ?? false
                 }
+                group.addTask { [weak self] in
+                    await self?.refreshAnnouncement(for: providerID)
+                    return false
+                }
             }
             for providerID in disabledProviders {
                 group.addTask { [weak self] in
                     await self?.probeDisabledProviderStatus(providerID)
-                    return false
-                }
-            }
-            if settings.preferences(for: .codex).isEnabled {
-                group.addTask { [weak self] in
-                    await self?.refreshCodexAnnouncement()
                     return false
                 }
             }
@@ -158,20 +156,18 @@ public final class QuotaStore {
         prefs.isEnabled = enabled
         settings.providerPreferences[providerID] = prefs
         if !enabled {
-            if providerID == .codex {
-                codexResetAnnouncement = nil
-            }
+            resetAnnouncements.removeValue(forKey: providerID)
             return
         }
 
         Task { [weak self] in
             guard let self else { return }
-            let succeeded = await self.refreshProvider(providerID)
+            async let usageSucceeded = self.refreshProvider(providerID)
+            async let announcementRefresh: Void = self.refreshAnnouncement(for: providerID)
+            let succeeded = await usageSucceeded
+            _ = await announcementRefresh
             if succeeded {
                 self.lastUpdatedAt = Date()
-            }
-            if providerID == .codex, self.settings.preferences(for: .codex).isEnabled {
-                await self.refreshCodexAnnouncement()
             }
         }
     }
@@ -249,8 +245,17 @@ public final class QuotaStore {
         }
     }
 
-    private func refreshCodexAnnouncement() async {
-        codexResetAnnouncement = await announcementService.fetchAnnouncement()
+    private func refreshAnnouncement(for providerID: ProviderID) async {
+        let fetched = await announcementService.fetchAnnouncement(for: providerID)
+        guard settings.preferences(for: providerID).isEnabled else {
+            resetAnnouncements.removeValue(forKey: providerID)
+            return
+        }
+        if let fetched {
+            resetAnnouncements[providerID] = fetched
+        } else {
+            resetAnnouncements.removeValue(forKey: providerID)
+        }
     }
 
     private func restartRefreshTimer() {

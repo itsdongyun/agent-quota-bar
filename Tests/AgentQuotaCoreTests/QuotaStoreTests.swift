@@ -44,7 +44,7 @@ final class QuotaStoreTests: XCTestCase {
         }
         let store = QuotaStore(
             providers: [failingClaude, failingCodex, failingAgy],
-            announcementService: CodexResetAnnouncementService(
+            announcementService: ResetAnnouncementService(
                 transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
             ),
             settingsStore: InMemorySettingsStore(),
@@ -70,7 +70,7 @@ final class QuotaStoreTests: XCTestCase {
         }
         let store = QuotaStore(
             providers: [claude, codex, agy],
-            announcementService: CodexResetAnnouncementService(
+            announcementService: ResetAnnouncementService(
                 transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
             ),
             settingsStore: InMemorySettingsStore(),
@@ -89,8 +89,12 @@ final class QuotaStoreTests: XCTestCase {
         XCTAssertEqual(store.connectionStatuses[.codex], .connected)
     }
 
-    func testDisablingCodexClearsAnnouncementAndReEnablingFetches() async throws {
-        let watchJSON = #"{"latest_alert":{"id":"1","kind":"watch","state":"active","url":"https://codex-reset.com/w"}}"#
+    func testDisablingProvidersClearsOnlyTheirAnnouncementsAndReEnablingFetches() async throws {
+        let nowISO = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-600))
+        let codexJSON = #"{"latest_alert":{"id":"1","kind":"watch","state":"active","url":"https://codex-reset.com/w"}}"#
+        let claudeJSON = #"{"lastResetAt":"\#(nowISO)","lastResetUrl":"https://x.com/ClaudeDevs/status/1","lastResetType":"reset"}"#
+        let agyJSON = #"{"events":[{"id":"ag1","announcedAt":"\#(nowISO)","sourceUrl":"https://x.com/_mohansolo/status/1","text":"Reset","models":["Gemini"],"verified":true}]}"#
+
         let codex = StubQuotaProvider(providerID: .codex) {
             ProviderQuotaSnapshot(provider: .codex, windows: [])
         }
@@ -100,24 +104,39 @@ final class QuotaStoreTests: XCTestCase {
         let agy = StubQuotaProvider(providerID: .antigravity) {
             ProviderQuotaSnapshot(provider: .antigravity, windows: [])
         }
+        let transport = MockHTTPTransport(handlers: [{ req in
+            switch req.url?.host {
+            case "codex-reset.com":
+                return HTTPResponseData(data: Data(codexJSON.utf8), statusCode: 200)
+            case "claude-resets.com":
+                return HTTPResponseData(data: Data(claudeJSON.utf8), statusCode: 200)
+            case "antigravityreset.com":
+                return HTTPResponseData(data: Data(agyJSON.utf8), statusCode: 200)
+            default:
+                return HTTPResponseData(data: Data(), statusCode: 404)
+            }
+        }])
         let store = QuotaStore(
             providers: [claude, codex, agy],
-            announcementService: CodexResetAnnouncementService(
-                transport: MockHTTPTransport(response: HTTPResponseData(data: Data(watchJSON.utf8), statusCode: 200))
-            ),
+            announcementService: ResetAnnouncementService(transport: transport),
             settingsStore: InMemorySettingsStore(),
             snapshotStore: InMemorySnapshotStore()
         )
 
         await store.refreshAll()
-        XCTAssertNotNil(store.codexResetAnnouncement)
+        XCTAssertNotNil(store.resetAnnouncements[.codex])
+        XCTAssertNotNil(store.resetAnnouncements[.claude])
+        XCTAssertNotNil(store.resetAnnouncements[.antigravity])
 
         store.setProviderEnabled(false, for: .codex)
-        XCTAssertNil(store.codexResetAnnouncement)
+        XCTAssertNil(store.resetAnnouncements[.codex])
+        XCTAssertNotNil(store.resetAnnouncements[.claude])
+        XCTAssertNotNil(store.resetAnnouncements[.antigravity])
 
         store.setProviderEnabled(true, for: .codex)
         try await Task.sleep(for: .milliseconds(50))
         XCTAssertEqual(store.connectionStatuses[.codex], .connected)
+        XCTAssertNotNil(store.resetAnnouncements[.codex])
     }
 
     func testSnapshotPersistenceLoadsOnInitAndRetainsLastDataOn429() async throws {
@@ -150,7 +169,7 @@ final class QuotaStoreTests: XCTestCase {
         }
         let store = QuotaStore(
             providers: [rateLimitedClaude],
-            announcementService: CodexResetAnnouncementService(
+            announcementService: ResetAnnouncementService(
                 transport: MockHTTPTransport(response: HTTPResponseData(data: Data(), statusCode: 500))
             ),
             settingsStore: InMemorySettingsStore(),

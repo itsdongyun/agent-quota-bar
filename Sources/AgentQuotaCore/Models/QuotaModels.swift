@@ -118,8 +118,14 @@ public struct ProviderQuotaSnapshot: Equatable, Codable, Sendable {
     }
 }
 
-/// Codex ad-hoc global reset announcement fetched from codex-reset.com.
-public struct CodexResetAnnouncement: Equatable, Sendable {
+/// Third-party global reset watch, banked reset grant, or recent reset notice for a provider.
+public struct ResetAnnouncement: Equatable, Sendable {
+    public enum Kind: String, Equatable, Sendable {
+        case watch
+        case bankedReset
+        case recentReset
+    }
+
     public enum State: String, Equatable, Sendable {
         case watch
         case active
@@ -127,43 +133,74 @@ public struct CodexResetAnnouncement: Equatable, Sendable {
         case other
     }
 
+    public static let recentResetMaxAge: TimeInterval = 24 * 3600
+    public static let bankedResetMaxAge: TimeInterval = 7 * 24 * 3600
+    private static let futureClockSkewTolerance: TimeInterval = 300
+
     public let id: String
-    public let kind: String
+    public let provider: ProviderID
+    public let kind: Kind
     public let state: State
     public let summary: String
+    public let announcedAt: Date?
     public let targetAt: Date?
     public let windowEnd: Date?
+    public let expiresAt: Date?
     public let windowLabel: String?
     public let sourceURL: URL?
 
     public init(
         id: String,
-        kind: String,
+        provider: ProviderID,
+        kind: Kind,
         state: State,
         summary: String,
-        targetAt: Date?,
-        windowEnd: Date?,
-        windowLabel: String?,
-        sourceURL: URL?
+        announcedAt: Date? = nil,
+        targetAt: Date? = nil,
+        windowEnd: Date? = nil,
+        expiresAt: Date? = nil,
+        windowLabel: String? = nil,
+        sourceURL: URL? = nil
     ) {
         self.id = id
+        self.provider = provider
         self.kind = kind
         self.state = state
         self.summary = summary
+        self.announcedAt = announcedAt
         self.targetAt = targetAt
         self.windowEnd = windowEnd
+        self.expiresAt = expiresAt
         self.windowLabel = windowLabel
         self.sourceURL = sourceURL
     }
 
-    /// True only while an upcoming global reset watch/active notice has not expired.
+    /// True only while a watch notice, banked reset grant, or recent global reset is still relevant.
     public func isActive(at now: Date = Date()) -> Bool {
-        guard kind == "watch", state == .watch || state == .active else {
-            return false
+        switch kind {
+        case .watch:
+            guard state == .watch || state == .active else {
+                return false
+            }
+            if let windowEnd, now > windowEnd.addingTimeInterval(3600) {
+                return false
+            }
+            return true
+        case .bankedReset:
+            if let expiresAt, now > expiresAt {
+                return false
+            }
+            if let announcedAt {
+                let age = now.timeIntervalSince(announcedAt)
+                return age >= -Self.futureClockSkewTolerance && age <= Self.bankedResetMaxAge
+            }
+            return expiresAt != nil
+        case .recentReset:
+            guard let announcedAt else {
+                return false
+            }
+            let age = now.timeIntervalSince(announcedAt)
+            return age >= -Self.futureClockSkewTolerance && age <= Self.recentResetMaxAge
         }
-        if let windowEnd, now > windowEnd.addingTimeInterval(3600) {
-            return false
-        }
-        return true
     }
 }

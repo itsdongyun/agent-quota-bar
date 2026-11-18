@@ -31,6 +31,8 @@ enum DesignTokens {
         static let cardBackground = Color.primary.opacity(0.05)
         static let borderSubtle = Color.primary.opacity(0.10)
         static let shadowColor = Color.black.opacity(0.12)
+        static let settingsTabSelectedBackground = Color.primary.opacity(0.08)
+        static let settingsTabSelectedBorder = Color.primary.opacity(0.14)
 
         static func resetBadgeBackground(_ id: ProviderID) -> Color {
             provider(id).opacity(0.14)
@@ -93,8 +95,11 @@ enum DesignTokens {
 
     enum Layout {
         static let popoverWidth: CGFloat = 440
-        static let settingsWidth: CGFloat = 460
-        static let settingsMinHeight: CGFloat = 420
+        static let settingsWidth: CGFloat = 480
+        static let settingsMinHeight: CGFloat = 400
+        static let settingsTabIconSize: CGFloat = 16
+        static let settingsTabMinWidth: CGFloat = 76
+        static let settingsStatusDotSize: CGFloat = 6
 
         static let headerButtonSize: CGFloat = 26
 

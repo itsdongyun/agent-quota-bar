@@ -206,7 +206,9 @@ final class ProviderParsingTests: XCTestCase {
         }
         """
         let now = DateParsing.parseISO8601("2026-11-17T11:30:00Z")!
-        let watch = CodexResetAnnouncementService.parseForecast(Data(watchJSON.utf8))
+        let watch = ResetAnnouncementService.parseCodexForecast(Data(watchJSON.utf8))
+        XCTAssertEqual(watch?.provider, .codex)
+        XCTAssertEqual(watch?.kind, .watch)
         XCTAssertTrue(watch?.isActive(at: now) == true)
 
         let confirmedJSON = """
@@ -219,8 +221,84 @@ final class ProviderParsingTests: XCTestCase {
           }
         }
         """
-        let confirmed = CodexResetAnnouncementService.parseForecast(Data(confirmedJSON.utf8))
+        let confirmed = ResetAnnouncementService.parseCodexForecast(Data(confirmedJSON.utf8))
         XCTAssertFalse(confirmed?.isActive(at: now) == true)
+    }
+
+    func testClaudeAndAntigravityResetAnnouncementParsingAndRecencyWindows() {
+        let now = DateParsing.parseISO8601("2026-11-15T12:00:00Z")!
+
+        // Claude banked reset within 7 days and before usableUntil is active.
+        let claudeBankedJSON = """
+        {
+          "lastResetAt": "2026-11-10T21:59:58Z",
+          "lastResetUrl": "https://x.com/ClaudeDevs/status/2120275296637321476",
+          "lastResetScope": "Pro, Max, Ultra + Team",
+          "lastResetType": "banked",
+          "lastResetUsableUntil": "2026-12-10T22:00:00Z",
+          "bankedResets": [
+            {
+              "id": "2120275296637321476",
+              "date": "2026-11-10T21:59:58Z",
+              "scope": "Pro, Max, Ultra + Team",
+              "usableUntil": "2026-12-10T22:00:00Z",
+              "url": "https://x.com/ClaudeDevs/status/2120275296637321476"
+            }
+          ]
+        }
+        """
+        let claudeBanked = ResetAnnouncementService.parseClaudeSummary(Data(claudeBankedJSON.utf8), now: now)
+        XCTAssertEqual(claudeBanked?.provider, .claude)
+        XCTAssertEqual(claudeBanked?.kind, .bankedReset)
+        XCTAssertTrue(claudeBanked?.isActive(at: now) == true)
+        // After 7 days, banked reset badge fades out even if usableUntil is a month away.
+        let after8Days = DateParsing.parseISO8601("2026-11-18T22:00:00Z")!
+        XCTAssertFalse(claudeBanked?.isActive(at: after8Days) == true)
+
+        // Claude immediate global reset is active within 24 hours and inactive afterward.
+        let claudeRecentJSON = """
+        {
+          "lastResetAt": "2026-11-15T06:00:00Z",
+          "lastResetUrl": "https://x.com/ClaudeDevs/status/123",
+          "lastResetScope": "all",
+          "lastResetType": "reset"
+        }
+        """
+        let claudeRecent = ResetAnnouncementService.parseClaudeSummary(Data(claudeRecentJSON.utf8), now: now)
+        XCTAssertEqual(claudeRecent?.kind, .recentReset)
+        XCTAssertTrue(claudeRecent?.isActive(at: now) == true)
+        XCTAssertFalse(claudeRecent?.isActive(at: now.addingTimeInterval(24 * 3600)) == true)
+
+        // Antigravity skips unverified entries and uses newest verified event within 24h.
+        let agyJSON = """
+        {
+          "events": [
+            {
+              "id": "unverified-newer",
+              "announcedAt": "2026-11-15T11:30:00Z",
+              "sourceUrl": "https://x.com/_mohansolo/status/999",
+              "text": "Rumored reset",
+              "models": ["Gemini"],
+              "verified": false
+            },
+            {
+              "id": "2121380918355234957",
+              "announcedAt": "2026-11-15T00:00:00Z",
+              "sourceUrl": "https://x.com/_mohansolo/status/2121380918355234957",
+              "text": "Resetting everyone's Gemini quota on Antigravity!",
+              "models": ["Gemini", "Argon"],
+              "verified": true
+            }
+          ]
+        }
+        """
+        let agy = ResetAnnouncementService.parseAntigravityState(Data(agyJSON.utf8))
+        XCTAssertEqual(agy?.id, "2121380918355234957")
+        XCTAssertEqual(agy?.provider, .antigravity)
+        XCTAssertEqual(agy?.kind, .recentReset)
+        XCTAssertEqual(agy?.windowLabel, "Gemini, Argon")
+        XCTAssertTrue(agy?.isActive(at: now) == true)
+        XCTAssertFalse(agy?.isActive(at: now.addingTimeInterval(13 * 3600)) == true)
     }
 
     func testClaudePreservesRotatedRefreshTokenWithin30SecondsOfExpiryAndCoalesces() async throws {
@@ -538,22 +616,40 @@ final class ProviderParsingTests: XCTestCase {
 
         // Malicious URL scheme rejected
         let badURLJSON = #"{"latest_alert":{"id":"1","kind":"watch","state":"active","url":"javascript:alert(1)"}}"#
-        let parsedBad = CodexResetAnnouncementService.parseForecast(Data(badURLJSON.utf8))
+        let parsedBad = ResetAnnouncementService.parseCodexForecast(Data(badURLJSON.utf8))
         XCTAssertNil(parsedBad?.sourceURL)
 
-        // Error clears cached announcement inside 300s throttle window
-        let goodJSON = #"{"latest_alert":{"id":"1","kind":"watch","state":"active","url":"https://codex-reset.com/watch"}}"#
+        // Error clears cached announcement inside 300s throttle window without affecting other providers
+        let goodCodexJSON = #"{"latest_alert":{"id":"1","kind":"watch","state":"active","url":"https://codex-reset.com/watch"}}"#
+        let goodClaudeJSON = #"{"lastResetAt":"2023-11-14T20:00:00Z","lastResetUrl":"https://x.com/ClaudeDevs/status/1","lastResetType":"reset"}"#
         let transport = MockHTTPTransport(handlers: [
-            { _ in HTTPResponseData(data: Data(goodJSON.utf8), statusCode: 200) },
+            { req in
+                if req.url?.host == "claude-resets.com" {
+                    return HTTPResponseData(data: Data(goodClaudeJSON.utf8), statusCode: 200)
+                }
+                return HTTPResponseData(data: Data(goodCodexJSON.utf8), statusCode: 200)
+            },
+            { req in
+                if req.url?.host == "claude-resets.com" {
+                    return HTTPResponseData(data: Data(goodClaudeJSON.utf8), statusCode: 200)
+                }
+                return HTTPResponseData(data: Data(goodCodexJSON.utf8), statusCode: 200)
+            },
             { _ in HTTPResponseData(data: Data(), statusCode: 500) },
         ])
-        let service = CodexResetAnnouncementService(transport: transport)
-        let t0 = Date(timeIntervalSince1970: 1_700_000_000)
-        let initial = await service.fetchAnnouncement(now: t0)
-        XCTAssertNotNil(initial)
-        let failed = await service.fetchAnnouncement(now: t0.addingTimeInterval(301))
-        XCTAssertNil(failed)
-        let throttledAfterFailure = await service.fetchAnnouncement(now: t0.addingTimeInterval(310))
+        let service = ResetAnnouncementService(transport: transport)
+        let t0 = Date(timeIntervalSince1970: 1_700_000_000) // 2023-11-14T22:13:20Z
+        let initialCodex = await service.fetchAnnouncement(for: .codex, now: t0)
+        XCTAssertNotNil(initialCodex)
+        let initialClaude = await service.fetchAnnouncement(for: .claude, now: t0)
+        XCTAssertNotNil(initialClaude)
+
+        let failedCodex = await service.fetchAnnouncement(for: .codex, now: t0.addingTimeInterval(301))
+        XCTAssertNil(failedCodex)
+        let throttledAfterFailure = await service.fetchAnnouncement(for: .codex, now: t0.addingTimeInterval(310))
         XCTAssertNil(throttledAfterFailure)
+        // Claude's cached entry stays intact within its own 300s window.
+        let cachedClaude = await service.fetchAnnouncement(for: .claude, now: t0.addingTimeInterval(100))
+        XCTAssertNotNil(cachedClaude)
     }
 }
