@@ -8,6 +8,10 @@ public protocol QuotaSnapshotStoring: Sendable {
 
 /// Persists the latest successful snapshots as JSON in Application Support so restarts retain last known data.
 public final class FileQuotaSnapshotStore: QuotaSnapshotStoring, @unchecked Sendable {
+    /// Info.plist key that overrides the Application Support folder name (set for dev bundles so they don't share state).
+    public static let supportDirectoryNameInfoKey = "AgentQuotaBarSupportDirectoryName"
+    public static let defaultSupportDirectoryName = "AgentQuotaBar"
+
     private let fileURL: URL
     private let lock = NSLock()
 
@@ -17,8 +21,10 @@ public final class FileQuotaSnapshotStore: QuotaSnapshotStoring, @unchecked Send
         } else {
             let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
                 ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+            let directoryName = Bundle.main.object(forInfoDictionaryKey: Self.supportDirectoryNameInfoKey) as? String
+                ?? Self.defaultSupportDirectoryName
             self.fileURL = appSupport
-                .appendingPathComponent("AgentQuotaBar", isDirectory: true)
+                .appendingPathComponent(directoryName, isDirectory: true)
                 .appendingPathComponent("snapshots.json")
         }
     }
