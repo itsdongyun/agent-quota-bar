@@ -9,7 +9,7 @@
 "popover.updated_at" = "업데이트: %@";
 "popover.never_updated" = "아직 업데이트되지 않음";
 "action.more" = "더 보기";
-"popover.slot_short" = "5시간·일간";
+"popover.slot_short" = "5시간";
 "popover.slot_weekly" = "주간";
 "popover.limit.five_hour" = "5시간 제한";
 "popover.limit.daily" = "일간 제한";

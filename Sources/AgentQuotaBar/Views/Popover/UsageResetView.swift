@@ -172,12 +172,13 @@ struct UsageResetView: View {
     ) -> some View {
         let clockSize = compact ? DesignTokens.Typography.captionSize : DesignTokens.Typography.resetTimeSize
         return VStack(alignment: alignment, spacing: DesignTokens.Spacing.xxxs) {
-            if let day = reset.day {
-                Text(day)
-                    .font(.system(size: DesignTokens.Typography.microSize))
-                    .foregroundStyle(DesignTokens.Colors.textSecondary)
-                    .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
-            }
+            // Reserve the day line even without a day so every row keeps the same height.
+            Text(reset.day ?? " ")
+                .font(.system(size: DesignTokens.Typography.microSize))
+                .foregroundStyle(DesignTokens.Colors.textSecondary)
+                .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
+                .opacity(reset.day == nil ? 0 : 1)
+                .accessibilityHidden(reset.day == nil)
             Text(reset.time)
                 .font(.system(size: clockSize, weight: .medium))
                 .foregroundStyle(DesignTokens.Colors.textPrimary)
