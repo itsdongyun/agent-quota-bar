@@ -108,59 +108,95 @@ struct PacePlotView: View {
     /// A label's wanted spot: level with its marker, on the right unless that overflows.
     private struct LabelSlot {
         let id: String
+        let label: String
+        let anchor: CGPoint
         let desiredY: CGFloat
         let width: CGFloat
-        let onRight: Bool
-        /// Edge facing the marker: leading edge for right labels, trailing edge for left labels.
-        let edgeX: CGFloat
     }
 
-    /// Places each label beside its marker, level with it. Labels that would overlap are stacked
-    /// into one column next to their markers, moved vertically only as far as needed to separate them
-    /// and kept in the markers' vertical order, so each label stays at its own marker's height.
+    /// Places each label beside its marker, level with it. Overlapping labels are grouped into one
+    /// column clear of their markers; identical labels in the same group collapse into a single
+    /// label instead of stacking duplicate percentages, while distinct labels stack in vertical order.
     private func placeLabels(in size: CGSize) -> [String: CGPoint] {
         let labelHeight = DesignTokens.Layout.chartLabelHeight
-        let inset = DesignTokens.Layout.chartMarkerSize / 2 + DesignTokens.Layout.chartLabelGap
+        let markerRadius = DesignTokens.Layout.chartMarkerSize / 2
+        let labelGap = DesignTokens.Layout.chartLabelGap
+        let inset = markerRadius + labelGap
 
         let slots = markers.map { marker -> LabelSlot in
             let anchor = position(of: marker, in: size)
             let width = marker.label.size(withAttributes: [.font: DesignTokens.Typography.chartLabel]).width
-            let onRight = anchor.x + inset + width <= size.width || anchor.x - inset - width < 0
             return LabelSlot(
                 id: marker.id,
+                label: marker.label,
+                anchor: anchor,
                 desiredY: anchor.y,
-                width: width,
-                onRight: onRight,
-                edgeX: onRight ? anchor.x + inset : anchor.x - inset
+                width: width
             )
         }
 
-        func layout(_ group: [LabelSlot]) -> [(slot: LabelSlot, rect: CGRect)] {
-            let sorted = group.sorted { $0.desiredY < $1.desiredY }
-            let span = CGFloat(sorted.count - 1) * labelHeight
-            let meanY = sorted.map(\.desiredY).reduce(0, +) / CGFloat(sorted.count)
+        func markerRect(for slot: LabelSlot) -> CGRect {
+            CGRect(
+                x: slot.anchor.x - inset,
+                y: slot.anchor.y - markerRadius,
+                width: inset * 2,
+                height: DesignTokens.Layout.chartMarkerSize
+            )
+        }
+
+        func layout(_ group: [LabelSlot]) -> [(id: String, rect: CGRect)] {
+            var indexByLabel: [String: Int] = [:]
+            var collapsed: [(id: String, sumY: CGFloat, count: Int, width: CGFloat)] = []
+            for slot in group.sorted(by: { $0.desiredY < $1.desiredY }) {
+                if let index = indexByLabel[slot.label] {
+                    collapsed[index].sumY += slot.desiredY
+                    collapsed[index].count += 1
+                } else {
+                    indexByLabel[slot.label] = collapsed.count
+                    collapsed.append((slot.id, slot.desiredY, 1, slot.width))
+                }
+            }
+            let visible = collapsed
+                .map { (id: $0.id, desiredY: $0.sumY / CGFloat($0.count), width: $0.width) }
+                .sorted { $0.desiredY < $1.desiredY }
+
+            let span = CGFloat(visible.count - 1) * labelHeight
+            let meanY = visible.map(\.desiredY).reduce(0, +) / CGFloat(visible.count)
             let topY = max(0, min(size.height - span, meanY - span / 2))
-            // Within a stack, labels share the column edge clear of every marker in it.
-            let rightEdge = sorted.filter(\.onRight).map(\.edgeX).max() ?? 0
-            let leftEdge = sorted.filter { !$0.onRight }.map(\.edgeX).min() ?? 0
-            return sorted.enumerated().map { index, slot in
-                let minX = slot.onRight ? rightEdge : leftEdge - slot.width
+
+            // Keep the label column clear of every marker in the group.
+            let maxAnchorX = group.map(\.anchor.x).max() ?? 0
+            let minAnchorX = group.map(\.anchor.x).min() ?? 0
+            let maxWidth = visible.map(\.width).max() ?? 0
+            let placeOnRight = maxAnchorX + inset + maxWidth <= size.width || minAnchorX - inset - maxWidth < 0
+            let rightEdge = maxAnchorX + inset
+            let leftEdge = minAnchorX - inset
+
+            return visible.enumerated().map { index, item in
+                let minX = placeOnRight ? rightEdge : leftEdge - item.width
                 let centerY = topY + CGFloat(index) * labelHeight
-                return (slot, CGRect(x: minX, y: centerY - labelHeight / 2, width: slot.width, height: labelHeight))
+                return (item.id, CGRect(x: minX, y: centerY - labelHeight / 2, width: item.width, height: labelHeight))
+            }
+        }
+
+        func intersectsAny(_ rects: [CGRect], _ targets: [CGRect]) -> Bool {
+            rects.contains { rect in
+                targets.contains { $0.insetBy(dx: 0.5, dy: 0.5).intersects(rect.insetBy(dx: 0.5, dy: 0.5)) }
             }
         }
 
         func overlaps(_ a: [LabelSlot], _ b: [LabelSlot]) -> Bool {
             let aRects = layout(a).map(\.rect)
-            return layout(b).contains { placed in
-                aRects.contains { $0.insetBy(dx: 0.5, dy: 0.5).intersects(placed.rect.insetBy(dx: 0.5, dy: 0.5)) }
-            }
+            let bRects = layout(b).map(\.rect)
+            return intersectsAny(aRects, bRects)
+                || intersectsAny(aRects, b.map(markerRect))
+                || intersectsAny(bRects, a.map(markerRect))
         }
 
         var groups: [[LabelSlot]] = []
         for slot in slots.sorted(by: { $0.desiredY < $1.desiredY }) {
             var current = [slot]
-            // Keep merging until the growing stack no longer overlaps any other stack.
+            // Keep merging until the growing stack no longer overlaps any other stack or marker.
             while let index = groups.firstIndex(where: { overlaps($0, current) }) {
                 current += groups.remove(at: index)
             }
@@ -169,8 +205,8 @@ struct PacePlotView: View {
 
         var result: [String: CGPoint] = [:]
         for group in groups {
-            for (slot, rect) in layout(group) {
-                result[slot.id] = CGPoint(x: rect.midX, y: rect.midY)
+            for (id, rect) in layout(group) {
+                result[id] = CGPoint(x: rect.midX, y: rect.midY)
             }
         }
         return result

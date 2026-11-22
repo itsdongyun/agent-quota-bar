@@ -153,9 +153,9 @@ public actor AntigravityQuotaProvider: QuotaProvider {
     }
 
     private static func shortGroupName(_ name: String) -> String {
-        switch name {
-        case "Gemini Models": return "Gemini"
-        case "Claude and GPT models": return "Claude/GPT"
+        switch name.lowercased() {
+        case "gemini models": return "Gemini"
+        case "claude and gpt models": return "Claude/GPT"
         default: return name
         }
     }

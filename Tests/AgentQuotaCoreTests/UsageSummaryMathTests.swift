@@ -42,11 +42,71 @@ final class UsageSummaryMathTests: XCTestCase {
         XCTAssertNil(summary.short)
     }
 
-    func testSummaryFallsBackToMostUsedModelWindow() {
-        let gemini = window("gemini-5h", provider: .antigravity, category: .modelSpecific, cadence: .fiveHour, used: 20, remaining: 3600)
-        let claude = window("claude-5h", provider: .antigravity, category: .modelSpecific, cadence: .fiveHour, used: 45, remaining: 3600)
-        let summary = UsageSummaryMath.summary(for: .antigravity, windows: [gemini, claude])
-        XCTAssertEqual(summary.short?.id, "claude-5h")
+    func testSummaryPrefersAntigravityGeminiOverHigherUsageSecondaryModels() {
+        let geminiWeekly = QuotaWindow(
+            id: "antigravity.gemini-weekly",
+            provider: .antigravity,
+            category: .modelSpecific,
+            cadence: .sevenDay,
+            modelName: "Gemini",
+            label: "Gemini (7d)",
+            usedPercent: 27,
+            resetsAt: now.addingTimeInterval(6 * day)
+        )
+        let geminiShort = QuotaWindow(
+            id: "antigravity.gemini-5h",
+            provider: .antigravity,
+            category: .modelSpecific,
+            cadence: .fiveHour,
+            modelName: "Gemini",
+            label: "Gemini (5h)",
+            usedPercent: 2,
+            resetsAt: now.addingTimeInterval(4 * 3600)
+        )
+        let claudeGPTWeekly = QuotaWindow(
+            id: "antigravity.3p-weekly",
+            provider: .antigravity,
+            category: .modelSpecific,
+            cadence: .sevenDay,
+            modelName: "Claude/GPT",
+            label: "Claude/GPT (7d)",
+            usedPercent: 52,
+            resetsAt: now.addingTimeInterval(5 * day)
+        )
+        let claudeGPTShort = QuotaWindow(
+            id: "antigravity.3p-5h",
+            provider: .antigravity,
+            category: .modelSpecific,
+            cadence: .fiveHour,
+            modelName: "Claude/GPT",
+            label: "Claude/GPT (5h)",
+            usedPercent: 40,
+            resetsAt: now.addingTimeInterval(3 * 3600)
+        )
+        let argonWeekly = QuotaWindow(
+            id: "antigravity.gemini-argon-wtu-weekly",
+            provider: .antigravity,
+            category: .modelSpecific,
+            cadence: .sevenDay,
+            modelName: "Gemini 4 Argon",
+            label: "Gemini 4 Argon (7d)",
+            usedPercent: 80,
+            resetsAt: now.addingTimeInterval(7 * day)
+        )
+
+        let summary = UsageSummaryMath.summary(
+            for: .antigravity,
+            windows: [claudeGPTWeekly, claudeGPTShort, argonWeekly, geminiWeekly, geminiShort]
+        )
+        XCTAssertEqual(summary.weekly?.id, "antigravity.gemini-weekly")
+        XCTAssertEqual(summary.short?.id, "antigravity.gemini-5h")
+    }
+
+    func testSummaryFallsBackToMostUsedModelWindowWhenNoPrimaryExists() {
+        let claude = window("antigravity.3p-weekly", provider: .antigravity, category: .modelSpecific, cadence: .sevenDay, used: 52, remaining: 5 * day)
+        let argon = window("antigravity.gemini-argon-wtu-weekly", provider: .antigravity, category: .modelSpecific, cadence: .sevenDay, used: 20, remaining: 6 * day)
+        let summary = UsageSummaryMath.summary(for: .antigravity, windows: [argon, claude])
+        XCTAssertEqual(summary.weekly?.id, "antigravity.3p-weekly")
     }
 
     func testPaceLevelUsesProjectedUsageAtReset() {

@@ -66,16 +66,30 @@ public enum UsageSummaryMath {
         }
     }
 
-    /// Picks the provider-wide window for each slot, falling back to the most used model-specific window.
+    /// Picks the provider-wide window for each slot. For Antigravity, where every bucket is
+    /// model-scoped, prefers the primary Gemini group over secondary model groups (such as
+    /// Claude/GPT or Argon) before falling back to the most used model-specific window.
     public static func summary(for provider: ProviderID, windows: [QuotaWindow]) -> ProviderUsageSummary {
         func pick(_ target: UsageSlot) -> QuotaWindow? {
             let candidates = windows.filter { slot(for: $0) == target }
             if let primary = candidates.first(where: { $0.category != .modelSpecific }) {
                 return primary
             }
+            if provider == .antigravity,
+               let gemini = candidates.first(where: isPrimaryAntigravityWindow)
+            {
+                return gemini
+            }
             return candidates.max { $0.usedPercent < $1.usedPercent }
         }
         return ProviderUsageSummary(provider: provider, short: pick(.short), weekly: pick(.weekly))
+    }
+
+    private static func isPrimaryAntigravityWindow(_ window: QuotaWindow) -> Bool {
+        if window.modelName?.caseInsensitiveCompare("Gemini") == .orderedSame {
+            return true
+        }
+        return window.id == "antigravity.gemini-5h" || window.id == "antigravity.gemini-weekly"
     }
 
     /// Usage percent the window would reach at reset if the current burn rate holds.
