@@ -26,7 +26,12 @@ let package = Package(
             name: "AgentQuotaBar",
             dependencies: ["AgentQuotaCore"],
             path: "Sources/AgentQuotaBar",
-            exclude: ["Resources/Info.plist"],
+            exclude: [
+                "Resources/Info.plist",
+                "Resources/AppIcon.icns",
+                "Resources/AppIcon.png",
+                "Resources/AppIcon.svg",
+            ],
             resources: [
                 .process("Resources/en.lproj"),
                 .process("Resources/ko.lproj"),

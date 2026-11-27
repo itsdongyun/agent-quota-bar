@@ -13,6 +13,8 @@
     <true/>
     <key>CFBundleExecutable</key>
     <string>AgentQuotaBar</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.agentquotabar.app</string>
     <key>CFBundleInfoDictionaryVersion</key>

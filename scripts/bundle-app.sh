@@ -44,6 +44,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$BIN_PATH" "$MACOS_DIR/${APP_NAME}"
 cp "$ROOT_DIR/Sources/${APP_NAME}/Resources/Info.plist" "$CONTENTS_DIR/Info.plist"
+cp "$ROOT_DIR/Sources/${APP_NAME}/Resources/AppIcon.icns" "$RESOURCES_DIR/AppIcon.icns"
 
 if [ "$VARIANT" = "dev" ]; then
   PLIST="$CONTENTS_DIR/Info.plist"
